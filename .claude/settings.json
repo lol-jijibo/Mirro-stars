@@ -1,0 +1,21 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(curl -s -X POST http://127.0.0.1:8001/api/questions -H \"Content-Type: application/json\" -d \"{\\\\\"content\\\\\":\\\\\"How to learn Python\\\\\"}\")",
+      "Bash(D:/python-lxf/python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000)",
+      "Bash(curl -s http://127.0.0.1:8000/)",
+      "Bash(curl -s -X POST http://127.0.0.1:8000/api/questions -H \"Content-Type: application/json\" -d \"{\\\\\"content\\\\\":\\\\\"如何学好英语\\\\\"}\")",
+      "Bash(curl -s -X POST http://127.0.0.1:8000/api/questions -H \"Content-Type: application/json\" -d '{\"content\":\"How to learn English effectively\"}')",
+      "Bash(mysql -u root -plixuF123456 -e \"USE mirro; DELETE FROM answers; DELETE FROM questions; SELECT 'test data cleaned' AS status;\")",
+      "Bash(python -c \"from app.main import app; print\\('Backend imports OK'\\)\")",
+      "Bash(D:/develop/py3.13.9/python.exe -c \"from app.main import app; print\\('Backend imports OK'\\)\")",
+      "Bash(\"D:/python-lxf/python.exe\" --version)",
+      "Bash(C:/Users/Lenovo/AppData/Local/Programs/Python/Python312/python.exe -c ' *)",
+      "Bash(netsh interface *)",
+      "Bash(findstr \":8000 \")",
+      "Bash(taskkill //F //PID 33676)",
+      "Bash(\"C:/Users/Lenovo/AppData/Local/hermes/hermes-agent/venv/Scripts/python.exe\" --version)",
+      "Bash(\"C:/Users/Lenovo/AppData/Local/hermes/hermes-agent/venv/Scripts/pip.exe\" --version)"
+    ]
+  }
+}

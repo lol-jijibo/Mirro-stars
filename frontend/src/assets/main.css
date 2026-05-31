@@ -1,0 +1,102 @@
+/**
+ * Mirro 前端全局样式
+ * 使用 Tailwind CSS v4 — 通过 @import 引入
+ * 业务场景：统一整个应用的基础样式，配合组件级的 Tailwind 原子类
+ */
+
+/* Tailwind CSS v4 入口 */
+@import "tailwindcss";
+
+/* ========== 品牌色CSS变量（在Tailwind基础上扩展） ========== */
+:root {
+  --color-primary: #6366f1;       /* 主色调：靛蓝色，象征智慧和信任 */
+  --color-primary-dark: #4f46e5;  /* 深主色：hover/active状态 */
+  --color-bg: #f8fafc;            /* 页面背景：浅灰 */
+  --color-surface: #ffffff;       /* 卡片背景：白色 */
+  --color-text: #1e293b;          /* 主文字：深灰 */
+  --color-text-muted: #94a3b8;    /* 次要文字；浅灰 */
+}
+
+/* ========== 基础排版样式 ========== */
+body {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  color: var(--color-text);
+  background-color: var(--color-bg);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ========== Markdown 渲染样式 — StreamingAnswer组件中的内容区 ========== */
+.markdown-body h1 { font-size: 1.5rem; font-weight: 700; margin-top: 1.5rem; margin-bottom: 0.75rem; }
+.markdown-body h2 { font-size: 1.25rem; font-weight: 600; margin-top: 1.25rem; margin-bottom: 0.5rem; }
+.markdown-body h3 { font-size: 1.1rem; font-weight: 600; margin-top: 1rem; margin-bottom: 0.5rem; }
+.markdown-body p { margin-bottom: 0.75rem; line-height: 1.75; }
+.markdown-body ul, .markdown-body ol { margin-bottom: 0.75rem; padding-left: 1.5rem; }
+.markdown-body li { margin-bottom: 0.25rem; }
+.markdown-body strong { font-weight: 600; color: var(--color-primary-dark); }
+.markdown-body a { color: var(--color-primary); text-decoration: underline; }
+.markdown-body blockquote {
+  border-left: 4px solid var(--color-primary);
+  padding-left: 1rem;
+  margin: 1rem 0;
+  color: var(--color-text-muted);
+  font-style: italic;
+}
+.markdown-body code {
+  background: #f1f5f9;
+  padding: 0.125rem 0.375rem;
+  border-radius: 0.25rem;
+  font-size: 0.875rem;
+}
+.markdown-body pre {
+  background: #1e293b;
+  color: #e2e8f0;
+  padding: 1rem;
+  border-radius: 0.5rem;
+  overflow-x: auto;
+  margin-bottom: 1rem;
+}
+.markdown-body pre code {
+  background: none;
+  padding: 0;
+  color: inherit;
+}
+
+/* ========== SSE流式光标闪烁动画 ========== */
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+.cursor-blink::after {
+  content: '▊';
+  animation: blink 1s infinite;
+  color: var(--color-primary);
+}
+.cursor-blink.done::after {
+  display: none;
+}
+
+/* ========== 骨架屏shimmer动画 ========== */
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+.skeleton-shimmer {
+  background: linear-gradient(90deg, #e2e8f0 25%, #f1f5f9 50%, #e2e8f0 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+}
+
+/* ========== Mermaid流程图容器 ========== */
+.mermaid-container {
+  display: flex;
+  justify-content: center;
+  overflow-x: auto;
+  padding: 1rem;
+  background: white;
+  border-radius: 0.75rem;
+  border: 1px solid #e2e8f0;
+}
+.mermaid-container svg {
+  max-width: 100%;
+  height: auto;
+}

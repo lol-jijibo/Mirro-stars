@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(\"C:/Users/Lenovo/AppData/Local/Programs/Python/Python312/python.exe\" -m pip install -r requirements.txt)",
+      "Bash(chcp 65001)",
+      "Bash(\"C:/Users/Lenovo/AppData/Local/Programs/Python/Python312/python.exe\" -m pip install fastapi \"uvicorn[standard]\" aiomysql openai tavily-python python-dotenv sse-starlette httpx)",
+      "Bash(PYTHONUTF8=1 \"C:/Users/Lenovo/AppData/Local/Programs/Python/Python312/python.exe\" -m pip install fastapi \"uvicorn[standard]\" aiomysql openai tavily-python python-dotenv sse-starlette httpx)",
+      "Bash(timeout 5 C:/Users/Lenovo/AppData/Local/Programs/Python/Python312/python.exe -c ' *)",
+      "Bash(sc query *)",
+      "Bash(C:/Users/Lenovo/AppData/Local/Programs/Python/Python312/python.exe -c ' *)",
+      "Bash(\"C:/Users/Lenovo/AppData/Local/Programs/Python/Python312/python.exe\" -m uvicorn app.main:app --host localhost --port 8000)",
+      "Bash(\"C:/Users/Lenovo/AppData/Local/Programs/Python/Python312/python.exe\" -m uvicorn app.main:app --host localhost --port 8001)",
+      "Bash(curl -s http://localhost:8001/)",
+      "Bash(curl -s -X POST http://localhost:8001/api/questions -H 'Content-Type: application/json' -d '{\"content\":\"测试问题\"}' --max-time 15)",
+      "Bash(curl -s -X POST http://localhost:8001/api/questions -H 'Content-Type: application/json' -d '{\"content\":\"test question\"}' --max-time 30)",
+      "Bash(tasklist)"
+    ]
+  }
+}
