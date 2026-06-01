@@ -1,16 +1,28 @@
 <!--
   问题历史列表页 — 查看所有提问记录
   业务角色：用户在此浏览、回顾、删除历史提问。
-  支持分页加载，按时间倒序排列，点击可进入详情页。
+  支持分页加载、关键词搜索、分类筛选，按时间倒序排列，点击可进入详情页。
 -->
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { fetchQuestions, deleteQuestion } from '@/api/client'
 import type { QuestionResponse } from '@/types'
 import SkeletonLoader from '@/components/SkeletonLoader.vue'
 
 const router = useRouter()
+
+/** 7个预设分类（与后端AI分类体系一致） */
+const CATEGORIES = [
+  '全部',
+  '职业发展',
+  '情感关系',
+  '个人成长',
+  '理财规划',
+  '健康生活',
+  '社交技巧',
+  '其他',
+]
 
 /** 历史问题列表 */
 const questions = ref<QuestionResponse[]>([])
@@ -24,15 +36,23 @@ const pageSize = 20
 const isLoading = ref(false)
 /** 是否还有更多数据 */
 const hasMore = ref(false)
+/** 搜索关键词 */
+const searchQuery = ref('')
+/** 分类筛选（"全部"表示不过滤） */
+const selectedCategory = ref('全部')
+/** 防抖定时器 */
+let debounceTimer: ReturnType<typeof setTimeout> | null = null
 
 /**
  * 加载问题历史列表
- * 业务场景：首次进入页面或翻页时加载问题记录。
+ * 业务场景：首次进入页面、翻页、搜索、筛选时加载问题记录。
  */
 async function loadQuestions() {
   isLoading.value = true
   try {
-    const data = await fetchQuestions(page.value, pageSize)
+    const search = searchQuery.value.trim()
+    const category = selectedCategory.value === '全部' ? '' : selectedCategory.value
+    const data = await fetchQuestions(page.value, pageSize, search, category)
     if (page.value === 1) {
       questions.value = data.items
     } else {
@@ -45,6 +65,24 @@ async function loadQuestions() {
   } finally {
     isLoading.value = false
   }
+}
+
+/**
+ * 搜索输入防抖处理（300ms）
+ * 业务场景：用户输入关键词后等待300ms再发起请求，避免频繁查询。
+ */
+function onSearchInput() {
+  if (debounceTimer) clearTimeout(debounceTimer)
+  debounceTimer = setTimeout(() => {
+    page.value = 1
+    loadQuestions()
+  }, 300)
+}
+
+/** 分类切换时重新加载 */
+function onCategoryChange() {
+  page.value = 1
+  loadQuestions()
 }
 
 /**
@@ -90,12 +128,12 @@ function formatTime(isoString: string): string {
 
 /** 卡片渐变色系 — 6种不同配色轮换 */
 const cardThemes = [
-  { gradient: 'bg-gradient-to-br from-indigo-50 via-white to-violet-50 border border-indigo-100/60', glow: 'bg-indigo-200/20', accent: 'bg-indigo-400', text: 'text-indigo-900 group-hover:text-indigo-700', meta: 'text-indigo-400', arrow: 'bg-indigo-500', shadow: '0 2px 12px rgba(99,102,241,0.10), 0 1px 3px rgba(0,0,0,0.04)', hoverShadow: '0 12px 40px rgba(99,102,241,0.18), 0 4px 12px rgba(0,0,0,0.08)' },
-  { gradient: 'bg-gradient-to-br from-sky-50 via-white to-cyan-50 border border-sky-100/60', glow: 'bg-sky-200/20', accent: 'bg-sky-400', text: 'text-sky-900 group-hover:text-sky-700', meta: 'text-sky-400', arrow: 'bg-sky-500', shadow: '0 2px 12px rgba(14,165,233,0.10), 0 1px 3px rgba(0,0,0,0.04)', hoverShadow: '0 12px 40px rgba(14,165,233,0.18), 0 4px 12px rgba(0,0,0,0.08)' },
-  { gradient: 'bg-gradient-to-br from-emerald-50 via-white to-teal-50 border border-emerald-100/60', glow: 'bg-emerald-200/20', accent: 'bg-emerald-400', text: 'text-emerald-900 group-hover:text-emerald-700', meta: 'text-emerald-400', arrow: 'bg-emerald-500', shadow: '0 2px 12px rgba(16,185,129,0.10), 0 1px 3px rgba(0,0,0,0.04)', hoverShadow: '0 12px 40px rgba(16,185,129,0.18), 0 4px 12px rgba(0,0,0,0.08)' },
-  { gradient: 'bg-gradient-to-br from-amber-50 via-white to-orange-50 border border-amber-100/60', glow: 'bg-amber-200/20', accent: 'bg-amber-400', text: 'text-amber-900 group-hover:text-amber-700', meta: 'text-amber-400', arrow: 'bg-amber-500', shadow: '0 2px 12px rgba(245,158,11,0.10), 0 1px 3px rgba(0,0,0,0.04)', hoverShadow: '0 12px 40px rgba(245,158,11,0.18), 0 4px 12px rgba(0,0,0,0.08)' },
-  { gradient: 'bg-gradient-to-br from-rose-50 via-white to-pink-50 border border-rose-100/60', glow: 'bg-rose-200/20', accent: 'bg-rose-400', text: 'text-rose-900 group-hover:text-rose-700', meta: 'text-rose-400', arrow: 'bg-rose-500', shadow: '0 2px 12px rgba(244,63,94,0.10), 0 1px 3px rgba(0,0,0,0.04)', hoverShadow: '0 12px 40px rgba(244,63,94,0.18), 0 4px 12px rgba(0,0,0,0.08)' },
-  { gradient: 'bg-gradient-to-br from-purple-50 via-white to-fuchsia-50 border border-purple-100/60', glow: 'bg-purple-200/20', accent: 'bg-purple-400', text: 'text-purple-900 group-hover:text-purple-700', meta: 'text-purple-400', arrow: 'bg-purple-500', shadow: '0 2px 12px rgba(168,85,247,0.10), 0 1px 3px rgba(0,0,0,0.04)', hoverShadow: '0 12px 40px rgba(168,85,247,0.18), 0 4px 12px rgba(0,0,0,0.08)' },
+  { gradient: 'bg-gradient-to-br from-indigo-50 via-white to-violet-50 dark:from-indigo-950 dark:via-slate-900 dark:to-violet-950 border border-indigo-100/60 dark:border-indigo-800/30', glow: 'bg-indigo-200/20 dark:bg-indigo-500/10', accent: 'bg-indigo-400', text: 'text-indigo-900 dark:text-indigo-200 group-hover:text-indigo-700 dark:group-hover:text-indigo-300', meta: 'text-indigo-400 dark:text-indigo-500', arrow: 'bg-indigo-500', shadow: '0 2px 12px rgba(99,102,241,0.10), 0 1px 3px rgba(0,0,0,0.04)', hoverShadow: '0 12px 40px rgba(99,102,241,0.18), 0 4px 12px rgba(0,0,0,0.08)' },
+  { gradient: 'bg-gradient-to-br from-sky-50 via-white to-cyan-50 dark:from-sky-950 dark:via-slate-900 dark:to-cyan-950 border border-sky-100/60 dark:border-sky-800/30', glow: 'bg-sky-200/20 dark:bg-sky-500/10', accent: 'bg-sky-400', text: 'text-sky-900 dark:text-sky-200 group-hover:text-sky-700 dark:group-hover:text-sky-300', meta: 'text-sky-400 dark:text-sky-500', arrow: 'bg-sky-500', shadow: '0 2px 12px rgba(14,165,233,0.10), 0 1px 3px rgba(0,0,0,0.04)', hoverShadow: '0 12px 40px rgba(14,165,233,0.18), 0 4px 12px rgba(0,0,0,0.08)' },
+  { gradient: 'bg-gradient-to-br from-emerald-50 via-white to-teal-50 dark:from-emerald-950 dark:via-slate-900 dark:to-teal-950 border border-emerald-100/60 dark:border-emerald-800/30', glow: 'bg-emerald-200/20 dark:bg-emerald-500/10', accent: 'bg-emerald-400', text: 'text-emerald-900 dark:text-emerald-200 group-hover:text-emerald-700 dark:group-hover:text-emerald-300', meta: 'text-emerald-400 dark:text-emerald-500', arrow: 'bg-emerald-500', shadow: '0 2px 12px rgba(16,185,129,0.10), 0 1px 3px rgba(0,0,0,0.04)', hoverShadow: '0 12px 40px rgba(16,185,129,0.18), 0 4px 12px rgba(0,0,0,0.08)' },
+  { gradient: 'bg-gradient-to-br from-amber-50 via-white to-orange-50 dark:from-amber-950 dark:via-slate-900 dark:to-orange-950 border border-amber-100/60 dark:border-amber-800/30', glow: 'bg-amber-200/20 dark:bg-amber-500/10', accent: 'bg-amber-400', text: 'text-amber-900 dark:text-amber-200 group-hover:text-amber-700 dark:group-hover:text-amber-300', meta: 'text-amber-400 dark:text-amber-500', arrow: 'bg-amber-500', shadow: '0 2px 12px rgba(245,158,11,0.10), 0 1px 3px rgba(0,0,0,0.04)', hoverShadow: '0 12px 40px rgba(245,158,11,0.18), 0 4px 12px rgba(0,0,0,0.08)' },
+  { gradient: 'bg-gradient-to-br from-rose-50 via-white to-pink-50 dark:from-rose-950 dark:via-slate-900 dark:to-pink-950 border border-rose-100/60 dark:border-rose-800/30', glow: 'bg-rose-200/20 dark:bg-rose-500/10', accent: 'bg-rose-400', text: 'text-rose-900 dark:text-rose-200 group-hover:text-rose-700 dark:group-hover:text-rose-300', meta: 'text-rose-400 dark:text-rose-500', arrow: 'bg-rose-500', shadow: '0 2px 12px rgba(244,63,94,0.10), 0 1px 3px rgba(0,0,0,0.04)', hoverShadow: '0 12px 40px rgba(244,63,94,0.18), 0 4px 12px rgba(0,0,0,0.08)' },
+  { gradient: 'bg-gradient-to-br from-purple-50 via-white to-fuchsia-50 dark:from-purple-950 dark:via-slate-900 dark:to-fuchsia-950 border border-purple-100/60 dark:border-purple-800/30', glow: 'bg-purple-200/20 dark:bg-purple-500/10', accent: 'bg-purple-400', text: 'text-purple-900 dark:text-purple-200 group-hover:text-purple-700 dark:group-hover:text-purple-300', meta: 'text-purple-400 dark:text-purple-500', arrow: 'bg-purple-500', shadow: '0 2px 12px rgba(168,85,247,0.10), 0 1px 3px rgba(0,0,0,0.04)', hoverShadow: '0 12px 40px rgba(168,85,247,0.18), 0 4px 12px rgba(0,0,0,0.08)' },
 ]
 
 function gradientClass(idx: number) { return cardThemes[idx % cardThemes.length].gradient }
@@ -116,8 +154,55 @@ onMounted(() => {
   <div class="space-y-4">
     <!-- 页面标题 -->
     <div class="flex items-center justify-between">
-      <h1 class="text-2xl font-bold text-slate-900">📋 问题历史</h1>
-      <span class="text-sm text-slate-400">共 {{ total }} 条记录</span>
+      <h1 class="text-2xl font-bold text-slate-900 dark:text-slate-100">📋 问题历史</h1>
+      <span class="text-sm text-slate-400 dark:text-slate-500">共 {{ total }} 条记录</span>
+    </div>
+
+    <!-- 搜索 + 分类筛选 -->
+    <div class="flex flex-col sm:flex-row gap-3">
+      <!-- 搜索框 -->
+      <div class="relative flex-1">
+        <svg
+          class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 dark:text-slate-500"
+          fill="none" stroke="currentColor" viewBox="0 0 24 24"
+        >
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+        </svg>
+        <input
+          v-model="searchQuery"
+          type="text"
+          placeholder="搜索问题关键词..."
+          class="w-full pl-10 pr-4 py-2.5 text-sm bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg
+                 text-slate-800 dark:text-slate-200 placeholder:text-slate-400 dark:placeholder:text-slate-500
+                 focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:focus:ring-indigo-400 focus:border-transparent
+                 transition-all"
+          @input="onSearchInput"
+        />
+        <!-- 清除搜索按钮 -->
+        <button
+          v-if="searchQuery"
+          class="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300"
+          @click="searchQuery = ''; onSearchInput()"
+        >
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </button>
+      </div>
+
+      <!-- 分类下拉 -->
+      <select
+        v-model="selectedCategory"
+        class="px-4 py-2.5 text-sm bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg
+               text-slate-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:focus:ring-indigo-400
+               cursor-pointer transition-all appearance-none bg-no-repeat"
+        style="background-image: url(&quot;data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%236b7280' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3e%3c/svg%3e&quot;); background-position: right 0.5rem center; background-size: 1.5em 1.5em; padding-right: 2.5rem;"
+        @change="onCategoryChange"
+      >
+        <option v-for="cat in CATEGORIES" :key="cat" :value="cat">
+          {{ cat === '全部' ? '📂 全部分类' : cat }}
+        </option>
+      </select>
     </div>
 
     <!-- 骨架屏加载 -->
@@ -126,10 +211,12 @@ onMounted(() => {
     <!-- 空状态 -->
     <div v-else-if="questions.length === 0" class="text-center py-16">
       <p class="text-5xl mb-4">📭</p>
-      <p class="text-slate-500 mb-4">还没有提问记录</p>
+      <p class="text-slate-500 dark:text-slate-400 mb-4">
+        {{ searchQuery || selectedCategory !== '全部' ? '没有匹配的记录，试试其他关键词或分类' : '还没有提问记录' }}
+      </p>
       <router-link
         to="/"
-        class="inline-block px-5 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 transition-colors"
+        class="inline-block px-5 py-2 bg-indigo-600 dark:bg-indigo-500 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 dark:hover:bg-indigo-600 transition-colors"
       >
         去提问
       </router-link>
@@ -173,10 +260,19 @@ onMounted(() => {
             {{ q.content }}
           </p>
 
-          <!-- 底部时间 -->
-          <span class="text-xs opacity-50" :class="metaClass(idx)">
-            {{ formatTime(q.created_at) }}
-          </span>
+          <!-- 底部：分类标签 + 时间 -->
+          <div class="flex items-center gap-2">
+            <span
+              v-if="q.category && q.category !== '分析中...'"
+              class="text-xs px-2 py-0.5 rounded-full bg-white/60 dark:bg-slate-800/60"
+              :class="metaClass(idx)"
+            >
+              {{ q.category }}
+            </span>
+            <span class="text-xs opacity-50" :class="metaClass(idx)">
+              {{ formatTime(q.created_at) }}
+            </span>
+          </div>
 
           <!-- hover 浮现的查看按钮 -->
           <div
@@ -194,7 +290,7 @@ onMounted(() => {
 
           <!-- 删除按钮 — hover 时显示在左上角 -->
           <button
-            class="absolute -top-1 -left-1 opacity-0 group-hover:opacity-100 transition-all duration-300 text-slate-300 hover:text-red-500 p-1"
+            class="absolute -top-1 -left-1 opacity-0 group-hover:opacity-100 transition-all duration-300 text-slate-300 dark:text-slate-600 hover:text-red-500 dark:hover:text-red-400 p-1"
             title="删除此记录"
             @click.stop="handleDelete(q.id)"
           >
@@ -209,7 +305,7 @@ onMounted(() => {
     <!-- 加载更多 -->
     <div v-if="hasMore" class="text-center pt-2">
       <button
-        class="px-6 py-2 text-sm text-indigo-600 bg-indigo-50 rounded-lg hover:bg-indigo-100 transition-colors"
+        class="px-6 py-2 text-sm text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950 rounded-lg hover:bg-indigo-100 dark:hover:bg-indigo-900 transition-colors"
         :disabled="isLoading"
         @click="loadMore"
       >

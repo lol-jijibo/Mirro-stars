@@ -110,7 +110,7 @@ onMounted(async () => {
 <template>
   <div class="space-y-6">
     <!-- 页面标题 -->
-    <h1 class="text-2xl font-bold text-slate-900">📊 统计看板</h1>
+    <h1 class="text-2xl font-bold text-slate-900 dark:text-slate-100">📊 统计看板</h1>
 
     <!-- 骨架屏 -->
     <SkeletonLoader v-if="isLoading" type="card" />
@@ -118,33 +118,33 @@ onMounted(async () => {
     <template v-else-if="stats">
       <!-- 数据概览卡片 — 总问题数、已解决数、解决率 -->
       <div class="grid grid-cols-3 gap-4">
-        <div class="bg-white rounded-xl border border-slate-200 p-5 text-center">
-          <p class="text-3xl font-bold text-indigo-600">{{ stats.total_questions }}</p>
-          <p class="text-sm text-slate-500 mt-1">总提问数</p>
+        <div class="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-5 text-center">
+          <p class="text-3xl font-bold text-indigo-600 dark:text-indigo-400">{{ stats.total_questions }}</p>
+          <p class="text-sm text-slate-500 dark:text-slate-400 mt-1">总提问数</p>
         </div>
-        <div class="bg-white rounded-xl border border-slate-200 p-5 text-center">
-          <p class="text-3xl font-bold text-emerald-600">{{ stats.total_answers }}</p>
-          <p class="text-sm text-slate-500 mt-1">已解答</p>
+        <div class="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-5 text-center">
+          <p class="text-3xl font-bold text-emerald-600 dark:text-emerald-400">{{ stats.total_answers }}</p>
+          <p class="text-sm text-slate-500 dark:text-slate-400 mt-1">已解答</p>
         </div>
-        <div class="bg-white rounded-xl border border-slate-200 p-5 text-center">
-          <p class="text-3xl font-bold text-amber-600">
+        <div class="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-5 text-center">
+          <p class="text-3xl font-bold text-amber-600 dark:text-amber-400">
             {{ stats.total_questions > 0 ? Math.round(stats.total_answers / stats.total_questions * 100) : 0 }}%
           </p>
-          <p class="text-sm text-slate-500 mt-1">解决率</p>
+          <p class="text-sm text-slate-500 dark:text-slate-400 mt-1">解决率</p>
         </div>
       </div>
 
       <!-- 图表区域 — 饼图 + 折线图 -->
       <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
         <!-- 分类分布饼图 -->
-        <div v-if="stats.categories.length > 0" class="bg-white rounded-xl border border-slate-200 p-5">
-          <h3 class="font-semibold text-sm text-slate-700 mb-3">问题分类分布</h3>
+        <div v-if="stats.categories.length > 0" class="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-5">
+          <h3 class="font-semibold text-sm text-slate-700 dark:text-slate-300 mb-3">问题分类分布</h3>
           <VChart :option="pieOption" autoresize style="height: 320px" />
         </div>
 
         <!-- 每日趋势折线图 -->
-        <div v-if="stats.daily_trend.length > 0" class="bg-white rounded-xl border border-slate-200 p-5">
-          <h3 class="font-semibold text-sm text-slate-700 mb-3">每日提问趋势</h3>
+        <div v-if="stats.daily_trend.length > 0" class="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-5">
+          <h3 class="font-semibold text-sm text-slate-700 dark:text-slate-300 mb-3">每日提问趋势</h3>
           <VChart :option="lineOption" autoresize style="height: 320px" />
         </div>
       </div>
@@ -153,7 +153,7 @@ onMounted(async () => {
     <!-- 空状态 -->
     <div v-else class="text-center py-16">
       <p class="text-5xl mb-4">📊</p>
-      <p class="text-slate-500">暂无统计数据</p>
+      <p class="text-slate-500 dark:text-slate-400">暂无统计数据</p>
     </div>
   </div>
 </template>

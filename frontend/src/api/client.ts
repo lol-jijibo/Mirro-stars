@@ -66,16 +66,22 @@ export async function apiDelete(path: string): Promise<void> {
 export function streamQuestion(
   question: string,
   onEvent: (type: string, data: string) => void,
-  onError?: (error: string) => void
+  onError?: (error: string) => void,
+  conversationId?: string
 ): EventSource {
   // 通过POST无法直接使用EventSource（只支持GET），改用fetch+ReadableStream
   // 这里使用fetch POST + SSE解析
   const controller = new AbortController()
 
+  const body: Record<string, string> = { content: question }
+  if (conversationId) {
+    body.conversation_id = conversationId
+  }
+
   fetch(`${API_BASE}/questions`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ content: question }),
+    body: JSON.stringify(body),
     signal: controller.signal,
   }).then(async (response) => {
     if (!response.ok) {
@@ -139,10 +145,14 @@ export function streamQuestion(
   } as unknown as EventSource
 }
 
-/** 获取问题历史列表 */
-export function fetchQuestions(page = 1, size = 20) {
+/** 获取问题历史列表（支持搜索、分类筛选和排除指定ID） */
+export function fetchQuestions(page = 1, size = 20, search = '', category = '', exclude = '') {
+  const params: Record<string, string | number> = { page, size }
+  if (search) params.search = search
+  if (category) params.category = category
+  if (exclude) params.exclude = exclude
   return apiGet<{ items: import('@/types').QuestionResponse[]; total: number; page: number; size: number }>(
-    '/questions', { page, size }
+    '/questions', params
   )
 }
 
@@ -164,4 +174,24 @@ export function searchWeb(query: string, maxResults = 5) {
 /** 获取统计数据 */
 export function fetchStats() {
   return apiGet<import('@/types').StatsOverview>('/questions/stats')
+}
+
+/** 提交答案反馈 */
+export function submitFeedback(questionId: string, feedback: import('@/types').FeedbackCreate) {
+  return apiPost<{ message: string; feedback_id: string }>(`/questions/${questionId}/feedback`, feedback)
+}
+
+/** 获取某问题的反馈记录 */
+export function fetchFeedback(questionId: string) {
+  return apiGet<{ feedbacks: import('@/types').FeedbackResponse[] }>(`/questions/${questionId}/feedback`)
+}
+
+/** 根据answer_id获取答案及关联问题（分享页用） */
+export function fetchAnswerByAnswerId(answerId: string) {
+  return apiGet<import('@/types').AnswerWithQuestion>(`/answers/${answerId}`)
+}
+
+/** 获取AI生成的相关追问建议（答案页底部推荐） */
+export function fetchRelatedQuestions(questionId: string) {
+  return apiGet<{ related_questions: string[] }>(`/questions/${questionId}/related`)
 }

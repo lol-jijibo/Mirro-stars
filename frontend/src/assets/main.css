@@ -7,6 +7,10 @@
 /* Tailwind CSS v4 入口 */
 @import "tailwindcss";
 
+/* ========== 暗色模式配置 ========== */
+/* Tailwind v4 使用 @custom-variant 定义 dark: 变体，检测 html 元素上的 .dark 类 */
+@custom-variant dark (&:where(.dark, .dark *));
+
 /* ========== 品牌色CSS变量（在Tailwind基础上扩展） ========== */
 :root {
   --color-primary: #6366f1;       /* 主色调：靛蓝色，象征智慧和信任 */
@@ -14,7 +18,17 @@
   --color-bg: #f8fafc;            /* 页面背景：浅灰 */
   --color-surface: #ffffff;       /* 卡片背景：白色 */
   --color-text: #1e293b;          /* 主文字：深灰 */
-  --color-text-muted: #94a3b8;    /* 次要文字；浅灰 */
+  --color-text-muted: #94a3b8;    /* 次要文字：浅灰 */
+}
+
+/* 暗色模式覆盖 */
+.dark {
+  --color-primary: #818cf8;       /* 暗色下主色调更亮 */
+  --color-primary-dark: #6366f1;
+  --color-bg: #0f172a;            /* 深蓝灰背景 */
+  --color-surface: #1e293b;       /* 深灰卡片背景 */
+  --color-text: #e2e8f0;          /* 浅色文字 */
+  --color-text-muted: #64748b;    /* 暗色下次要文字 */
 }
 
 /* ========== 基础排版样式 ========== */
@@ -61,6 +75,26 @@ body {
   color: inherit;
 }
 
+/* 暗色模式 - Markdown 样式覆盖 */
+.dark .markdown-body strong {
+  color: var(--color-primary);
+}
+.dark .markdown-body code {
+  background: #334155;
+  color: #e2e8f0;
+}
+.dark .markdown-body pre {
+  background: #0f172a;
+  color: #cbd5e1;
+}
+.dark .markdown-body blockquote {
+  border-left-color: var(--color-primary);
+  color: var(--color-text-muted);
+}
+.dark .markdown-body a {
+  color: var(--color-primary);
+}
+
 /* ========== SSE流式光标闪烁动画 ========== */
 @keyframes blink {
   0%, 100% { opacity: 1; }
@@ -85,6 +119,10 @@ body {
   background-size: 200% 100%;
   animation: shimmer 1.5s infinite;
 }
+.dark .skeleton-shimmer-dark {
+  background: linear-gradient(90deg, #334155 25%, #475569 50%, #334155 75%);
+  background-size: 200% 100%;
+}
 
 /* ========== Mermaid流程图容器 ========== */
 .mermaid-container {
@@ -95,6 +133,10 @@ body {
   background: white;
   border-radius: 0.75rem;
   border: 1px solid #e2e8f0;
+}
+.dark .mermaid-container {
+  background: #1e293b;
+  border-color: #334155;
 }
 .mermaid-container svg {
   max-width: 100%;

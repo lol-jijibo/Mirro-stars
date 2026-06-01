@@ -18,7 +18,9 @@
       "Bash(\"C:/Users/Lenovo/AppData/Local/hermes/hermes-agent/venv/Scripts/pip.exe\" --version)",
       "Bash(git pull *)",
       "Bash(git checkout *)",
-      "Bash(git commit *)"
+      "Bash(git commit *)",
+      "Bash(dir /B \"d:\\\\Projects-star\\\\Mirro\")",
+      "Bash(git -C d:/Projects-star/Mirro log --oneline -30)"
     ]
   }
 }

@@ -11,6 +11,9 @@ import type { SolutionStep, Source } from '@/types'
 export const useQuestionStore = defineStore('question', () => {
   // ========== 流式生成状态（SSE过程中实时更新） ==========
 
+  /** 当前提问的原始文本（生成完成后用于展示） */
+  const streamingQuestion = ref('')
+
   /** 当前正在生成的答案Markdown正文（逐段累加） */
   const streamingContent = ref('')
 
@@ -25,6 +28,9 @@ export const useQuestionStore = defineStore('question', () => {
 
   /** 分步执行计划 */
   const streamingSteps = ref<SolutionStep[]>([])
+
+  /** AI生成的相关推荐追问 */
+  const streamingRelatedQuestions = ref<string[]>([])
 
   /** 搜索来源列表 */
   const streamingSources = ref<Source[]>([])
@@ -41,20 +47,34 @@ export const useQuestionStore = defineStore('question', () => {
   /** 当前答案的ID（生成完成后赋值） */
   const currentAnswerId = ref('')
 
+  /** 当前对话的会话ID（多轮对话时使用，首次提问为空，追问时传入首问的question_id） */
+  const conversationId = ref('')
+
+  /** 流式生成开始时间（毫秒时间戳，用于计算耗时） */
+  const streamingStartedAt = ref(0)
+
+  /** 流式生成耗时（秒，生成完成后计算） */
+  const streamingElapsed = ref(0)
+
   // ========== 操作方法 ==========
 
   /** 开始新一轮流式生成，重置所有状态 */
-  function startStreaming() {
+  function startStreaming(question: string, convId: string = '') {
+    streamingQuestion.value = question
     streamingContent.value = ''
     streamingCategory.value = ''
     streamingType.value = 'insight'
     streamingFlowchart.value = ''
     streamingSteps.value = []
+    streamingRelatedQuestions.value = []
     streamingSources.value = []
     isStreaming.value = true
     isDone.value = false
     currentQuestionId.value = ''
     currentAnswerId.value = ''
+    conversationId.value = convId
+    streamingStartedAt.value = Date.now()
+    streamingElapsed.value = 0
   }
 
   /** 追加正文段落 */
@@ -82,6 +102,11 @@ export const useQuestionStore = defineStore('question', () => {
     streamingSteps.value = steps
   }
 
+  /** 设置相关推荐 */
+  function setRelatedQuestions(questions: string[]) {
+    streamingRelatedQuestions.value = questions
+  }
+
   /** 设置来源 */
   function setSources(sources: Source[]) {
     streamingSources.value = sources
@@ -91,41 +116,53 @@ export const useQuestionStore = defineStore('question', () => {
   function finishStreaming(questionId: string, answerId: string) {
     currentQuestionId.value = questionId
     currentAnswerId.value = answerId
+    streamingElapsed.value = (Date.now() - streamingStartedAt.value) / 1000
     isDone.value = true
     isStreaming.value = false
   }
 
   /** 重置整个store */
   function reset() {
+    streamingQuestion.value = ''
     streamingContent.value = ''
     streamingCategory.value = ''
     streamingType.value = 'insight'
     streamingFlowchart.value = ''
     streamingSteps.value = []
+    streamingRelatedQuestions.value = []
     streamingSources.value = []
     isStreaming.value = false
     isDone.value = false
     currentQuestionId.value = ''
     currentAnswerId.value = ''
+    conversationId.value = ''
+    streamingStartedAt.value = 0
+    streamingElapsed.value = 0
   }
 
   return {
+    streamingQuestion,
     streamingContent,
     streamingCategory,
     streamingType,
     streamingFlowchart,
     streamingSteps,
+    streamingRelatedQuestions,
     streamingSources,
     isStreaming,
     isDone,
     currentQuestionId,
     currentAnswerId,
+    conversationId,
+    streamingStartedAt,
+    streamingElapsed,
     startStreaming,
     appendContent,
     setCategory,
     setType,
     setFlowchart,
     setSteps,
+    setRelatedQuestions,
     setSources,
     finishStreaming,
     reset,

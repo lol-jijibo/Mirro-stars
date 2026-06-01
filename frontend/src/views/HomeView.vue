@@ -4,18 +4,22 @@
   这是整个Mirro产品流程的起点。
 -->
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
+import { ref, onMounted, onUnmounted } from 'vue'
+import { useRouter, useRoute } from 'vue-router'
 import QuestionInput from '@/components/QuestionInput.vue'
 import { streamQuestion, fetchQuestions } from '@/api/client'
 import { useQuestionStore } from '@/stores/question'
 import type { SolutionStep, Source, QuestionResponse } from '@/types'
 
 const router = useRouter()
+const route = useRoute()
 const store = useQuestionStore()
 
 /** 是否正在生成答案（控制输入框禁用和导航栏状态） */
 const isGenerating = ref(false)
+
+/** 当前SSE连接引用（用于Esc取消） */
+const activeStream = ref<EventSource | null>(null)
 
 /** 错误消息 */
 const errorMessage = ref('')
@@ -48,11 +52,14 @@ function handleSubmit(question: string) {
   errorMessage.value = ''
   isGenerating.value = true
 
-  // 初始化store状态，准备接收流式数据
-  store.startStreaming()
+  // 检查URL中是否携带了conversation_id（从QuestionView追问跳转过来）
+  const convId = (route.query.conversation_id as string) || ''
+
+  // 初始化store状态，准备接收流式数据（同时保存原始提问文本）
+  store.startStreaming(question, convId)
 
   // 建立SSE连接，逐阶段处理后端推送
-  streamQuestion(
+  activeStream.value = streamQuestion(
     question,
     // onEvent — 每收到一个SSE事件时触发
     (type, data) => {
@@ -75,6 +82,12 @@ function handleSubmit(question: string) {
             store.setSteps(steps)
           } catch { /* JSON解析失败静默 */ }
           break
+        case 'related_questions':
+          try {
+            const questions: string[] = JSON.parse(data)
+            store.setRelatedQuestions(questions)
+          } catch { /* JSON解析失败静默 */ }
+          break
         case 'sources':
           try {
             const sources: Source[] = JSON.parse(data)
@@ -90,6 +103,7 @@ function handleSubmit(question: string) {
             errorMessage.value = data || '生成失败，请稍后重试'
           }
           isGenerating.value = false
+          activeStream.value = null
           store.reset()
           break
         case 'done':
@@ -97,8 +111,11 @@ function handleSubmit(question: string) {
             const payload = JSON.parse(data)
             store.finishStreaming(payload.question_id, payload.answer_id)
             isGenerating.value = false
+            activeStream.value = null
             // 生成完成 → 跳转到答案详情页
             router.push(`/question/${payload.question_id}`)
+            // 浏览器通知：用户切到其他标签页时提醒
+            sendBrowserNotification()
           } catch { /* JSON解析失败静默 */ }
           break
       }
@@ -108,9 +125,62 @@ function handleSubmit(question: string) {
       console.error('[Mirro] SSE连接失败:', error)
       errorMessage.value = `生成失败: ${error}`
       isGenerating.value = false
+      activeStream.value = null
       store.reset()
-    }
+    },
+    convId || undefined  // 传入 conversation_id（空字符串不传）
   )
+}
+
+/**
+ * 发送浏览器通知
+ * 当SSE流完成时，如果用户切到了其他标签页，通过Notification API提醒。
+ * 仅在页面不可见时发送，避免用户已在当前页面时产生干扰。
+ */
+function sendBrowserNotification() {
+  // 只在页面不可见时发送通知（用户切到其他标签页）
+  if (document.visibilityState !== 'hidden') return
+
+  // 检查浏览器是否支持Notification API
+  if (!('Notification' in window)) return
+
+  if (Notification.permission === 'granted') {
+    new Notification('Mirro AI', {
+      body: '你的问题已解答完成，点击查看 →',
+      icon: '/favicon.ico',
+      tag: 'mirro-answer-done',
+    })
+  } else if (Notification.permission === 'default') {
+    // 首次请求权限
+    Notification.requestPermission().then((permission) => {
+      if (permission === 'granted') {
+        new Notification('Mirro AI', {
+          body: '你的问题已解答完成，点击查看 →',
+          icon: '/favicon.ico',
+          tag: 'mirro-answer-done',
+        })
+      }
+    })
+  }
+}
+
+/** 取消当前生成 */
+function cancelGeneration() {
+  if (activeStream.value) {
+    activeStream.value.close()
+    activeStream.value = null
+  }
+  isGenerating.value = false
+  store.reset()
+}
+
+/** 全局键盘快捷键 */
+function onGlobalKeydown(e: KeyboardEvent) {
+  // Esc → 取消生成
+  if (e.key === 'Escape' && isGenerating.value) {
+    e.preventDefault()
+    cancelGeneration()
+  }
 }
 
 /** 格式化时间为相对时间 */
@@ -131,12 +201,12 @@ function formatTime(isoString: string): string {
 
 /** 卡片渐变色系 — 6种不同配色轮换，每张卡片都有独特的视觉识别度 */
 const cardThemes = [
-  { gradient: 'bg-gradient-to-br from-indigo-50 via-white to-violet-50 border border-indigo-100/60', glow: 'bg-indigo-200/20', accent: 'bg-indigo-400', text: 'text-indigo-900 group-hover:text-indigo-700', meta: 'text-indigo-400', arrow: 'bg-indigo-500', shadow: '0 2px 12px rgba(99,102,241,0.10), 0 1px 3px rgba(0,0,0,0.04)', hoverShadow: '0 12px 40px rgba(99,102,241,0.18), 0 4px 12px rgba(0,0,0,0.08)' },
-  { gradient: 'bg-gradient-to-br from-sky-50 via-white to-cyan-50 border border-sky-100/60', glow: 'bg-sky-200/20', accent: 'bg-sky-400', text: 'text-sky-900 group-hover:text-sky-700', meta: 'text-sky-400', arrow: 'bg-sky-500', shadow: '0 2px 12px rgba(14,165,233,0.10), 0 1px 3px rgba(0,0,0,0.04)', hoverShadow: '0 12px 40px rgba(14,165,233,0.18), 0 4px 12px rgba(0,0,0,0.08)' },
-  { gradient: 'bg-gradient-to-br from-emerald-50 via-white to-teal-50 border border-emerald-100/60', glow: 'bg-emerald-200/20', accent: 'bg-emerald-400', text: 'text-emerald-900 group-hover:text-emerald-700', meta: 'text-emerald-400', arrow: 'bg-emerald-500', shadow: '0 2px 12px rgba(16,185,129,0.10), 0 1px 3px rgba(0,0,0,0.04)', hoverShadow: '0 12px 40px rgba(16,185,129,0.18), 0 4px 12px rgba(0,0,0,0.08)' },
-  { gradient: 'bg-gradient-to-br from-amber-50 via-white to-orange-50 border border-amber-100/60', glow: 'bg-amber-200/20', accent: 'bg-amber-400', text: 'text-amber-900 group-hover:text-amber-700', meta: 'text-amber-400', arrow: 'bg-amber-500', shadow: '0 2px 12px rgba(245,158,11,0.10), 0 1px 3px rgba(0,0,0,0.04)', hoverShadow: '0 12px 40px rgba(245,158,11,0.18), 0 4px 12px rgba(0,0,0,0.08)' },
-  { gradient: 'bg-gradient-to-br from-rose-50 via-white to-pink-50 border border-rose-100/60', glow: 'bg-rose-200/20', accent: 'bg-rose-400', text: 'text-rose-900 group-hover:text-rose-700', meta: 'text-rose-400', arrow: 'bg-rose-500', shadow: '0 2px 12px rgba(244,63,94,0.10), 0 1px 3px rgba(0,0,0,0.04)', hoverShadow: '0 12px 40px rgba(244,63,94,0.18), 0 4px 12px rgba(0,0,0,0.08)' },
-  { gradient: 'bg-gradient-to-br from-purple-50 via-white to-fuchsia-50 border border-purple-100/60', glow: 'bg-purple-200/20', accent: 'bg-purple-400', text: 'text-purple-900 group-hover:text-purple-700', meta: 'text-purple-400', arrow: 'bg-purple-500', shadow: '0 2px 12px rgba(168,85,247,0.10), 0 1px 3px rgba(0,0,0,0.04)', hoverShadow: '0 12px 40px rgba(168,85,247,0.18), 0 4px 12px rgba(0,0,0,0.08)' },
+  { gradient: 'bg-gradient-to-br from-indigo-50 via-white to-violet-50 dark:from-indigo-950 dark:via-slate-900 dark:to-violet-950 border border-indigo-100/60 dark:border-indigo-800/30', glow: 'bg-indigo-200/20 dark:bg-indigo-500/10', accent: 'bg-indigo-400', text: 'text-indigo-900 dark:text-indigo-200 group-hover:text-indigo-700 dark:group-hover:text-indigo-300', meta: 'text-indigo-400 dark:text-indigo-500', arrow: 'bg-indigo-500', shadow: '0 2px 12px rgba(99,102,241,0.10), 0 1px 3px rgba(0,0,0,0.04)', hoverShadow: '0 12px 40px rgba(99,102,241,0.18), 0 4px 12px rgba(0,0,0,0.08)' },
+  { gradient: 'bg-gradient-to-br from-sky-50 via-white to-cyan-50 dark:from-sky-950 dark:via-slate-900 dark:to-cyan-950 border border-sky-100/60 dark:border-sky-800/30', glow: 'bg-sky-200/20 dark:bg-sky-500/10', accent: 'bg-sky-400', text: 'text-sky-900 dark:text-sky-200 group-hover:text-sky-700 dark:group-hover:text-sky-300', meta: 'text-sky-400 dark:text-sky-500', arrow: 'bg-sky-500', shadow: '0 2px 12px rgba(14,165,233,0.10), 0 1px 3px rgba(0,0,0,0.04)', hoverShadow: '0 12px 40px rgba(14,165,233,0.18), 0 4px 12px rgba(0,0,0,0.08)' },
+  { gradient: 'bg-gradient-to-br from-emerald-50 via-white to-teal-50 dark:from-emerald-950 dark:via-slate-900 dark:to-teal-950 border border-emerald-100/60 dark:border-emerald-800/30', glow: 'bg-emerald-200/20 dark:bg-emerald-500/10', accent: 'bg-emerald-400', text: 'text-emerald-900 dark:text-emerald-200 group-hover:text-emerald-700 dark:group-hover:text-emerald-300', meta: 'text-emerald-400 dark:text-emerald-500', arrow: 'bg-emerald-500', shadow: '0 2px 12px rgba(16,185,129,0.10), 0 1px 3px rgba(0,0,0,0.04)', hoverShadow: '0 12px 40px rgba(16,185,129,0.18), 0 4px 12px rgba(0,0,0,0.08)' },
+  { gradient: 'bg-gradient-to-br from-amber-50 via-white to-orange-50 dark:from-amber-950 dark:via-slate-900 dark:to-orange-950 border border-amber-100/60 dark:border-amber-800/30', glow: 'bg-amber-200/20 dark:bg-amber-500/10', accent: 'bg-amber-400', text: 'text-amber-900 dark:text-amber-200 group-hover:text-amber-700 dark:group-hover:text-amber-300', meta: 'text-amber-400 dark:text-amber-500', arrow: 'bg-amber-500', shadow: '0 2px 12px rgba(245,158,11,0.10), 0 1px 3px rgba(0,0,0,0.04)', hoverShadow: '0 12px 40px rgba(245,158,11,0.18), 0 4px 12px rgba(0,0,0,0.08)' },
+  { gradient: 'bg-gradient-to-br from-rose-50 via-white to-pink-50 dark:from-rose-950 dark:via-slate-900 dark:to-pink-950 border border-rose-100/60 dark:border-rose-800/30', glow: 'bg-rose-200/20 dark:bg-rose-500/10', accent: 'bg-rose-400', text: 'text-rose-900 dark:text-rose-200 group-hover:text-rose-700 dark:group-hover:text-rose-300', meta: 'text-rose-400 dark:text-rose-500', arrow: 'bg-rose-500', shadow: '0 2px 12px rgba(244,63,94,0.10), 0 1px 3px rgba(0,0,0,0.04)', hoverShadow: '0 12px 40px rgba(244,63,94,0.18), 0 4px 12px rgba(0,0,0,0.08)' },
+  { gradient: 'bg-gradient-to-br from-purple-50 via-white to-fuchsia-50 dark:from-purple-950 dark:via-slate-900 dark:to-fuchsia-950 border border-purple-100/60 dark:border-purple-800/30', glow: 'bg-purple-200/20 dark:bg-purple-500/10', accent: 'bg-purple-400', text: 'text-purple-900 dark:text-purple-200 group-hover:text-purple-700 dark:group-hover:text-purple-300', meta: 'text-purple-400 dark:text-purple-500', arrow: 'bg-purple-500', shadow: '0 2px 12px rgba(168,85,247,0.10), 0 1px 3px rgba(0,0,0,0.04)', hoverShadow: '0 12px 40px rgba(168,85,247,0.18), 0 4px 12px rgba(0,0,0,0.08)' },
 ]
 
 function gradientClass(idx: number) { return cardThemes[idx % cardThemes.length].gradient }
@@ -155,6 +225,28 @@ function goToQuestion(id: string) {
 
 onMounted(() => {
   loadRecentQuestions()
+  window.addEventListener('keydown', onGlobalKeydown)
+
+  // 预先请求浏览器通知权限（用户首次访问时温和请求）
+  if ('Notification' in window && Notification.permission === 'default') {
+    // 延迟3秒请求，避免页面加载时立即弹出权限对话框
+    setTimeout(() => {
+      Notification.requestPermission()
+    }, 3000)
+  }
+
+  // 处理从 QuestionView 追问跳转过来的场景
+  // URL格式: /?conversation_id=xxx&follow_up=yyy
+  const followUp = route.query.follow_up as string
+  if (followUp && followUp.trim().length >= 5) {
+    // 清除 URL 中的 follow_up 参数（保留 conversation_id），防止刷新时重复提交
+    router.replace({ path: '/', query: { conversation_id: route.query.conversation_id } })
+    handleSubmit(followUp.trim())
+  }
+})
+
+onUnmounted(() => {
+  window.removeEventListener('keydown', onGlobalKeydown)
 })
 </script>
 
@@ -162,11 +254,11 @@ onMounted(() => {
   <div class="flex flex-col items-center">
     <!-- 英雄区域 — 产品简介 -->
     <div class="text-center mb-10 mt-6">
-      <h1 class="text-4xl font-bold text-slate-900 mb-3">
+      <h1 class="text-4xl font-bold text-slate-900 dark:text-slate-100 mb-3">
         <span class="text-5xl">🪞</span> Mirro
       </h1>
-      <p class="text-lg text-slate-500 mb-1">AI 驱动的智能问题解决引擎</p>
-      <p class="text-sm text-slate-400 max-w-md mx-auto">
+      <p class="text-lg text-slate-500 dark:text-slate-400 mb-1">AI 驱动的智能问题解决引擎</p>
+      <p class="text-sm text-slate-400 dark:text-slate-500 max-w-md mx-auto">
         提出你的困惑 → AI 全网搜索案例 → 生成解决方案流程图 → 分步执行计划
       </p>
     </div>
@@ -177,7 +269,7 @@ onMounted(() => {
     </div>
 
     <!-- 错误提示 -->
-    <div v-if="errorMessage" class="mt-4 px-4 py-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm max-w-2xl w-full">
+    <div v-if="errorMessage" class="mt-4 px-4 py-3 bg-red-50 dark:bg-red-950 border border-red-200 dark:border-red-800 rounded-lg text-red-700 dark:text-red-300 text-sm max-w-2xl w-full">
       {{ errorMessage }}
     </div>
 
@@ -185,10 +277,10 @@ onMounted(() => {
     <div class="w-full max-w-2xl mt-10">
       <!-- 标题 -->
       <div class="text-center mb-5">
-        <h2 class="text-lg font-semibold text-slate-700">
+        <h2 class="text-lg font-semibold text-slate-700 dark:text-slate-300">
           💬 大家最近在问
         </h2>
-        <p class="text-xs text-slate-400 mt-1">看看其他人都关心什么问题</p>
+        <p class="text-xs text-slate-400 dark:text-slate-500 mt-1">看看其他人都关心什么问题</p>
       </div>
 
       <!-- 加载骨架 — 匹配新卡片风格 -->
@@ -271,7 +363,7 @@ onMounted(() => {
       <!-- 空状态 -->
       <div v-else class="text-center py-10">
         <p class="text-4xl mb-3">📭</p>
-        <p class="text-sm text-slate-400">还没有人提问，来做第一个提问者吧！</p>
+        <p class="text-sm text-slate-400 dark:text-slate-500">还没有人提问，来做第一个提问者吧！</p>
       </div>
     </div>
   </div>

@@ -79,6 +79,7 @@ async def _init_tables(db: MySQLDatabase):
             id VARCHAR(36) PRIMARY KEY COMMENT '问题唯一ID，使用UUID',
             content TEXT NOT NULL COMMENT '用户提问的原始内容',
             category VARCHAR(50) COMMENT 'AI自动分类：职业/情感/成长/理财/健康/社交/其他',
+            conversation_id VARCHAR(36) COMMENT '多轮对话的会话ID，同一轮对话的所有问题共享此ID',
             created_at VARCHAR(255) NOT NULL COMMENT '提问时间，ISO8601格式'
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     """)
@@ -110,6 +111,43 @@ async def _init_tables(db: MySQLDatabase):
         await db.commit()
     except Exception:
         pass  # 列已存在则跳过
+
+    # 兼容旧表：如果 questions 表已存在但缺少 conversation_id 列，则自动添加
+    try:
+        await db.execute("""
+            ALTER TABLE questions ADD COLUMN conversation_id VARCHAR(36)
+            COMMENT '多轮对话的会话ID，同一轮对话的所有问题共享此ID'
+            AFTER category
+        """)
+        await db.commit()
+    except Exception:
+        pass  # 列已存在则跳过
+
+    # 兼容旧表：如果 answers 表已存在但缺少 related_questions 列，则自动添加
+    try:
+        await db.execute("""
+            ALTER TABLE answers ADD COLUMN related_questions TEXT
+            COMMENT 'AI在生成答案时一并产出的相关追问建议，JSON数组'
+            AFTER sources
+        """)
+        await db.commit()
+    except Exception:
+        pass  # 列已存在则跳过
+
+    # 反馈表 — 记录用户对AI答案的评价
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS feedback (
+            id VARCHAR(36) PRIMARY KEY COMMENT '反馈唯一ID',
+            question_id VARCHAR(36) NOT NULL COMMENT '关联的问题ID',
+            answer_id VARCHAR(36) NOT NULL COMMENT '关联的答案ID',
+            rating INT NOT NULL DEFAULT 0 COMMENT '评分：1=好评(👍), -1=差评(👎), 0=中性',
+            comment TEXT COMMENT '可选的文字反馈',
+            created_at VARCHAR(255) NOT NULL COMMENT '反馈时间',
+            FOREIGN KEY (question_id) REFERENCES questions(id) ON DELETE CASCADE,
+            FOREIGN KEY (answer_id) REFERENCES answers(id) ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    """)
+    await db.commit()
 
 
 async def close_db():

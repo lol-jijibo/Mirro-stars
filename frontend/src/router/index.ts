@@ -37,6 +37,12 @@ const routes: RouteRecordRaw[] = [
     component: () => import('@/views/DashboardView.vue'),
     meta: { title: '统计看板' },
   },
+  {
+    path: '/share/:answerId',
+    name: 'share',
+    component: () => import('@/views/ShareView.vue'),
+    meta: { title: '分享答案 — Mirro' },
+  },
 ]
 
 const router = createRouter({

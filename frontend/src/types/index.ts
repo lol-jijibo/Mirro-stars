@@ -9,6 +9,7 @@
 /** 用户提交问题的请求体 */
 export interface QuestionCreate {
   content: string
+  conversation_id?: string  // 多轮对话的会话ID，传入此字段表示追问
 }
 
 /** 问题列表项（不含答案详情） */
@@ -17,6 +18,12 @@ export interface QuestionResponse {
   content: string
   category: string | null
   created_at: string
+}
+
+/** 通过answer_id获取的答案+问题组合（分享页用） */
+export interface AnswerWithQuestion {
+  answer: AnswerResponse
+  question: QuestionResponse
 }
 
 /** 搜索来源引用 */
@@ -43,6 +50,7 @@ export interface AnswerResponse {
   flowchart_mermaid: string | null
   steps: SolutionStep[]
   sources: Source[]
+  related_questions: string[]
   created_at: string
 }
 
@@ -102,14 +110,15 @@ export interface StatsOverview {
 
 /** SSE事件类型：后端推送的不同阶段的数据 */
 export type SSEEventType =
-  | 'category'    // 问题分类结果
-  | 'searching'   // 正在搜索提示
-  | 'type'        // 答案类型: action=含步骤计划 / insight=纯深度分析
-  | 'content'     // Markdown正文段落
-  | 'flowchart'   // Mermaid流程图
-  | 'steps'       // 分步执行计划
-  | 'sources'     // 搜索来源列表
-  | 'done'        // 全部完成
+  | 'category'          // 问题分类结果
+  | 'searching'         // 正在搜索提示
+  | 'type'              // 答案类型: action=含步骤计划 / insight=纯深度分析
+  | 'content'           // Markdown正文段落
+  | 'flowchart'         // Mermaid流程图
+  | 'steps'             // 分步执行计划
+  | 'related_questions' // AI生成的相关追问建议
+  | 'sources'           // 搜索来源列表
+  | 'done'              // 全部完成
 
 /** SSE事件数据 */
 export interface SSEEvent {
@@ -121,4 +130,23 @@ export interface SSEEvent {
 export interface SSEDonePayload {
   question_id: string
   answer_id: string
+}
+
+// ========== 反馈相关类型 ==========
+
+/** 提交反馈的请求体 */
+export interface FeedbackCreate {
+  answer_id: string
+  rating: number  // 1=好评, -1=差评, 0=中性
+  comment?: string
+}
+
+/** 反馈记录 */
+export interface FeedbackResponse {
+  id: string
+  question_id: string
+  answer_id: string
+  rating: number
+  comment: string | null
+  created_at: string
 }

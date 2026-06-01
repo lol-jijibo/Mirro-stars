@@ -5,6 +5,7 @@ uvicorn[standard]>=0.30.0
 
 # 数据库：MySQL异步驱动
 aiomysql>=0.2.0
+cryptography>=42.0.0
 
 # LLM调用：OpenAI SDK（兼容 OpenAI / Claude / 通义千问等）
 openai>=1.50.0

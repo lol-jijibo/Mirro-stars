@@ -22,7 +22,7 @@ class Settings:
     LLM_BASE_URL: str | None = os.getenv("LLM_BASE_URL")          # 自定义API地址（DeepSeek等兼容接口需要）
 
     # ========== 搜索配置 — 全网案例检索 ==========
-    TAVILY_API_KEY: str = os.getenv("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", "")         # Tavily搜索API密钥（免费1000次/月）
+    TAVILY_API_KEY: str = os.getenv("TAVILY_API_KEY", "")                    # Tavily搜索API密钥（免费1000次/月）
 
     # ========== 数据库配置 — MySQL ==========
     DB_HOST: str = os.getenv("DB_HOST", "localhost")

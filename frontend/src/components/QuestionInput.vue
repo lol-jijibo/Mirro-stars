@@ -36,8 +36,9 @@ function handleSubmit() {
   emit('submit', inputContent.value.trim())
 }
 
-/** 处理回车键快捷提交 */
+/** 处理键盘快捷键 */
 function handleKeydown(e: KeyboardEvent) {
+  // Enter（非Shift）或 Ctrl+Enter → 提交
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault()
     handleSubmit()
@@ -54,10 +55,10 @@ function handleKeydown(e: KeyboardEvent) {
         :disabled="loading"
         placeholder="输入你遇到的问题…&#10;例如：我25岁想转行做程序员，零基础该怎么规划？"
         rows="3"
-        class="w-full px-4 py-3 text-slate-800 bg-white border border-slate-300 rounded-xl resize-none
-               placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent
-               disabled:bg-slate-100 disabled:cursor-not-allowed transition-all text-base"
-        :class="{ 'border-red-400 focus:ring-red-500': isOverLimit }"
+        class="w-full px-4 py-3 text-slate-800 dark:text-slate-200 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded-xl resize-none
+               placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:focus:ring-indigo-400 focus:border-transparent
+               disabled:bg-slate-100 dark:disabled:bg-slate-700 disabled:cursor-not-allowed transition-all text-base"
+        :class="{ 'border-red-400 dark:border-red-500 focus:ring-red-500': isOverLimit }"
         @keydown="handleKeydown"
       />
 
@@ -65,16 +66,16 @@ function handleKeydown(e: KeyboardEvent) {
       <div class="flex items-center justify-between mt-2">
         <span
           class="text-xs"
-          :class="isOverLimit ? 'text-red-500' : remainingChars <= 50 ? 'text-amber-500' : 'text-slate-400'"
+          :class="isOverLimit ? 'text-red-500 dark:text-red-400' : remainingChars <= 50 ? 'text-amber-500 dark:text-amber-400' : 'text-slate-400 dark:text-slate-500'"
         >
           {{ isOverLimit ? `超出 ${Math.abs(remainingChars)} 字` : `还可输入 ${remainingChars} 字` }}
         </span>
 
         <button
           :disabled="!canSubmit"
-          class="px-5 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg
-                 hover:bg-indigo-700 active:scale-95
-                 disabled:bg-slate-300 disabled:cursor-not-allowed disabled:active:scale-100
+          class="px-5 py-2 bg-indigo-600 dark:bg-indigo-500 text-white text-sm font-medium rounded-lg
+                 hover:bg-indigo-700 dark:hover:bg-indigo-600 active:scale-95
+                 disabled:bg-slate-300 dark:disabled:bg-slate-700 disabled:cursor-not-allowed disabled:active:scale-100
                  transition-all duration-150"
           @click="handleSubmit"
         >
@@ -92,8 +93,10 @@ function handleKeydown(e: KeyboardEvent) {
     </div>
 
     <!-- 提示文字 -->
-    <p class="mt-3 text-xs text-slate-400 text-center">
-      按 Enter 提交，Shift + Enter 换行 · AI 将为你生成结构化解答方案
+    <p class="mt-3 text-xs text-slate-400 dark:text-slate-500 text-center">
+      按 <kbd class="px-1 py-0.5 bg-slate-100 dark:bg-slate-700 rounded text-[10px] font-mono">Enter</kbd> / <kbd class="px-1 py-0.5 bg-slate-100 dark:bg-slate-700 rounded text-[10px] font-mono">Ctrl+Enter</kbd> 提交，
+      <kbd class="px-1 py-0.5 bg-slate-100 dark:bg-slate-700 rounded text-[10px] font-mono">Shift+Enter</kbd> 换行 ·
+      <kbd class="px-1 py-0.5 bg-slate-100 dark:bg-slate-700 rounded text-[10px] font-mono">Esc</kbd> 取消生成
     </p>
   </div>
 </template>

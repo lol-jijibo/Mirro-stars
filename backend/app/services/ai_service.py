@@ -82,7 +82,7 @@ async def _retry_call(client: AsyncOpenAI, messages: list, temperature: float, m
     raise RuntimeError(f"AI服务调用失败，已重试{MAX_RETRIES}次，最后错误: {last_error}")
 
 
-async def generate_answer(question: str) -> dict:
+async def generate_answer(question: str, history: list[dict] | None = None) -> dict:
     """
     核心业务方法：根据用户问题生成结构化答案
     一次LLM调用，智能判断问题类型后产出对应结构的答案。
@@ -90,6 +90,10 @@ async def generate_answer(question: str) -> dict:
     问题分为两类：
     - 行动型（action）：需要分步执行方案 → 输出正文 + 步骤 + 可选流程图
     - 认知型（insight）：只需要深度分析见解 → 只输出正文，步骤和流程图留空
+
+    参数:
+        question: 用户当前提问
+        history: 多轮对话的历史问答对，格式为 [{"role": "user", "content": "..."}, {"role": "assistant", "content": "..."}]
 
     返回格式：
     {
@@ -142,6 +146,12 @@ async def generate_answer(question: str) -> dict:
 - 格式示例：graph TD\\n    A[具体现状] --> B[第一步行动] --> C[第二个节点] --> D[预期成果]
 - 认知型问题、情感咨询、观点讨论等不需要流程图的，直接返回 ""
 
+### related_questions（必填）
+根据当前问题和你的回答，生成3个真正相关的深度追问建议，帮用户继续探索：
+- 从不同角度切入（实操层面、原理层面、延伸场景、风险注意事项等）
+- 每个问题简短精炼（15-30字），用中文自然表达
+- 问题应该引导更深入的思考或行动，而不是重复原问题
+
 输出必须严格符合以下JSON格式，不要在JSON外加任何文字：
 {
   "type": "action",
@@ -149,15 +159,19 @@ async def generate_answer(question: str) -> dict:
   "flowchart_mermaid": "graph TD\\n    A[...] --> B[...]",
   "steps": [
     {"step": 1, "title": "...", "description": "...", "duration": "..."}
-  ]
+  ],
+  "related_questions": ["角度一的追问？", "角度二的追问？", "角度三的追问？"]
 }"""
+
+    # 构建消息列表：system prompt + 历史对话 + 当前问题
+    messages = [{"role": "system", "content": system_prompt}]
+    if history:
+        messages.extend(history)
+    messages.append({"role": "user", "content": question})
 
     response = await _retry_call(
         client=client,
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": question}
-        ],
+        messages=messages,
         temperature=0.7,
         max_tokens=4000,
     )
@@ -184,7 +198,54 @@ async def generate_answer(question: str) -> dict:
         "content": result.get("content", ""),
         "flowchart_mermaid": result.get("flowchart_mermaid", ""),
         "steps": result.get("steps", []),
+        "related_questions": result.get("related_questions", []),
     }
+
+
+async def generate_related_questions(question: str, answer_content: str) -> list[str]:
+    """
+    根据当前问答内容，通过AI生成3个真正相关的追问建议。
+    业务场景：答案页底部"相关推荐"区域，帮用户发现值得继续探索的问题方向。
+
+    与简单的数据库分类筛选不同，此方法通过LLM理解问答语义后生成
+    与当前话题真正相关的追问，而不是同一大类下的其他历史提问。
+    """
+    client = _get_client()
+
+    prompt = f"""你是一个帮助用户深入探索问题的助手。请根据以下问答内容，生成3个与当前话题真正相关的追问建议。
+
+要求：
+- 从不同角度切入，角度要多样化（比如：实操层面、原理层面、延伸场景、风险注意事项等）
+- 每个问题简短精炼（15-30字）
+- 用中文提问，语言自然像朋友间的对话
+- 问题应该引导更深入的思考或行动，而不是重复原问题
+
+用户的问题：{question}
+
+AI的回答摘要：{answer_content[:2000]}
+
+请只返回一个JSON字符串数组，不要加其他内容。例如：["如何准备面试中的行为问题？", "转行到互联网需要多长时间？", "没有相关经验怎么破局？"]"""
+
+    response = await _retry_call(
+        client=client,
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.7,
+        max_tokens=300,
+    )
+
+    raw = response.choices[0].message.content.strip()
+    # 提取JSON数组
+    match = re.search(r'\[([\s\S]*?)\]', raw)
+    if match:
+        try:
+            parsed = json.loads(f"[{match.group(1)}]")
+            if isinstance(parsed, list) and all(isinstance(item, str) for item in parsed):
+                return parsed[:5]  # 最多5个
+        except json.JSONDecodeError:
+            pass
+
+    print(f"[AI服务] 解析相关推荐失败，原始返回: {raw[:200]}")
+    return []
 
 
 async def classify_question(question: str) -> str:

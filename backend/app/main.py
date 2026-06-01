@@ -10,6 +10,7 @@ from app.core.config import settings
 from app.models.database import get_db, close_db
 from app.api.questions import router as questions_router
 from app.api.search import router as search_router
+from app.api.answers import router as answers_router
 
 
 @asynccontextmanager
@@ -46,6 +47,7 @@ app.add_middleware(
 # 注册业务路由
 app.include_router(questions_router)  # /api/questions/*
 app.include_router(search_router)     # /api/search/*
+app.include_router(answers_router)    # /api/answers/*
 
 
 @app.get("/")

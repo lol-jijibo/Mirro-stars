@@ -20,6 +20,10 @@ class QuestionCreate(BaseModel):
         description="用户提问的原始内容，最少5字最多500字",
         examples=["我25岁，想转行做程序员但零基础，应该怎么规划？"]
     )
+    conversation_id: Optional[str] = Field(
+        None,
+        description="多轮对话的会话ID。传入此字段表示该问题是某次对话的追问，后端会将历史问答拼接进LLM上下文"
+    )
 
 
 class Source(BaseModel):
@@ -55,6 +59,7 @@ class AnswerResponse(BaseModel):
     flowchart_mermaid: Optional[str] = Field(None, description="Mermaid流程图语法，前端用mermaid.js渲染")
     steps: list[SolutionStep] = Field(default_factory=list, description="分步执行计划")
     sources: list[Source] = Field(default_factory=list, description="AI搜索引用的来源列表")
+    related_questions: list[str] = Field(default_factory=list, description="AI生成的相关追问建议，在生成答案时一并产出")
     created_at: str = Field(..., description="生成时间")
 
 
@@ -106,3 +111,36 @@ class SearchResponse(BaseModel):
     """
     query: str = Field(..., description="原始搜索词")
     results: list[SearchResult] = Field(default_factory=list, description="搜索结果列表")
+
+
+# ========== 反馈相关模型 ==========
+
+class AnswerWithQuestion(BaseModel):
+    """
+    通过answer_id获取答案及其关联问题的结构
+    业务场景：分享链接 /share/:answer_id 展示只读答案页
+    """
+    answer: AnswerResponse = Field(..., description="答案详情")
+    question: QuestionResponse = Field(..., description="关联的问题信息")
+
+
+class FeedbackCreate(BaseModel):
+    """
+    用户对答案的反馈
+    业务场景：用户在答案详情页对AI回答质量进行打分（👍/👎），可选附加文字评论
+    """
+    answer_id: str = Field(..., description="被评价的答案ID")
+    rating: int = Field(..., ge=-1, le=1, description="评分：1=好评(👍), -1=差评(👎), 0=中性")
+    comment: Optional[str] = Field(None, max_length=500, description="可选的文字反馈，最多500字")
+
+
+class FeedbackResponse(BaseModel):
+    """
+    反馈记录的响应结构
+    """
+    id: str = Field(..., description="反馈ID")
+    question_id: str = Field(..., description="关联的问题ID")
+    answer_id: str = Field(..., description="关联的答案ID")
+    rating: int = Field(..., description="评分：1/-1/0")
+    comment: Optional[str] = Field(None, description="文字反馈")
+    created_at: str = Field(..., description="反馈时间")
