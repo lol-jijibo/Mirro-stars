@@ -11,10 +11,26 @@ const emit = defineEmits<{
   submit: [content: string]
 }>()
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   /** 是否正在加载中（AI生成答案期间禁用输入） */
   loading?: boolean
-}>()
+  /** 输入框占位提示 */
+  placeholder?: string
+  /** 是否隐藏快捷键提示 */
+  hideHint?: boolean
+  /** 提交按钮是否放入输入框内部 */
+  inlineSubmit?: boolean
+  /** 提交按钮文字 */
+  submitText?: string
+  /** 提交按钮图标 */
+  submitIcon?: string
+}>(), {
+  placeholder: '输入你遇到的问题…\n例如：我25岁想转行做程序员，零基础该怎么规划？',
+  hideHint: false,
+  inlineSubmit: false,
+  submitText: '求解',
+  submitIcon: '🔍',
+})
 
 /** 用户输入的提问内容 */
 const inputContent = ref('')
@@ -49,18 +65,42 @@ function handleKeydown(e: KeyboardEvent) {
 <template>
   <div class="w-full">
     <!-- 输入区域 -->
-    <div class="relative">
-      <textarea
-        v-model="inputContent"
-        :disabled="loading"
-        placeholder="输入你遇到的问题…&#10;例如：我25岁想转行做程序员，零基础该怎么规划？"
-        rows="3"
-        class="w-full px-4 py-3 text-slate-800 dark:text-slate-200 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded-xl resize-none
-               placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:focus:ring-indigo-400 focus:border-transparent
-               disabled:bg-slate-100 dark:disabled:bg-slate-700 disabled:cursor-not-allowed transition-all text-base"
-        :class="{ 'border-red-400 dark:border-red-500 focus:ring-red-500': isOverLimit }"
-        @keydown="handleKeydown"
-      />
+    <div>
+      <div class="relative">
+        <textarea
+          v-model="inputContent"
+          :disabled="loading"
+          :placeholder="placeholder"
+          :rows="inlineSubmit ? 1 : 3"
+          class="w-full text-slate-800 dark:text-slate-200 resize-none
+                 placeholder:text-slate-400 dark:placeholder:text-slate-500
+                 disabled:cursor-not-allowed transition-all text-base"
+          :class="[
+            { 'border-red-400 dark:border-red-500 focus:ring-red-500': isOverLimit },
+            inlineSubmit
+              ? 'pl-0 pr-10 pt-0 pb-8 bg-transparent border-0 rounded-lg focus:outline-none focus:ring-0'
+              : 'px-4 py-3 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:focus:ring-indigo-400 focus:border-transparent disabled:bg-slate-100 dark:disabled:bg-slate-700',
+          ]"
+          @keydown="handleKeydown"
+        />
+
+        <button
+          v-if="inlineSubmit"
+          :disabled="!canSubmit"
+          class="absolute right-3 bottom-3 inline-flex h-8 w-8 items-center justify-center rounded-full bg-indigo-600 dark:bg-indigo-500 text-white
+                 hover:bg-indigo-700 dark:hover:bg-indigo-600 active:scale-95
+                 disabled:bg-slate-300 dark:disabled:bg-slate-700 disabled:cursor-not-allowed disabled:active:scale-100
+                 transition-all duration-150"
+          title="发送"
+          @click="handleSubmit"
+        >
+          <svg v-if="loading" class="animate-spin h-4 w-4" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none" />
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+          </svg>
+          <span v-else class="text-2xl leading-none">{{ submitIcon }}</span>
+        </button>
+      </div>
 
       <!-- 底部操作栏：字数统计 + 提交按钮 -->
       <div class="flex items-center justify-between mt-2">
@@ -72,6 +112,7 @@ function handleKeydown(e: KeyboardEvent) {
         </span>
 
         <button
+          v-if="!inlineSubmit"
           :disabled="!canSubmit"
           class="px-5 py-2 bg-indigo-600 dark:bg-indigo-500 text-white text-sm font-medium rounded-lg
                  hover:bg-indigo-700 dark:hover:bg-indigo-600 active:scale-95
@@ -87,13 +128,13 @@ function handleKeydown(e: KeyboardEvent) {
             </svg>
             分析中…
           </span>
-          <span v-else>🔍 求解</span>
+          <span v-else>{{ submitIcon }} {{ submitText }}</span>
         </button>
       </div>
     </div>
 
     <!-- 提示文字 -->
-    <p class="mt-3 text-xs text-slate-400 dark:text-slate-500 text-center">
+    <p v-if="!hideHint" class="mt-3 text-xs text-slate-400 dark:text-slate-500 text-center">
       按 <kbd class="px-1 py-0.5 bg-slate-100 dark:bg-slate-700 rounded text-[10px] font-mono">Enter</kbd> / <kbd class="px-1 py-0.5 bg-slate-100 dark:bg-slate-700 rounded text-[10px] font-mono">Ctrl+Enter</kbd> 提交，
       <kbd class="px-1 py-0.5 bg-slate-100 dark:bg-slate-700 rounded text-[10px] font-mono">Shift+Enter</kbd> 换行 ·
       <kbd class="px-1 py-0.5 bg-slate-100 dark:bg-slate-700 rounded text-[10px] font-mono">Esc</kbd> 取消生成

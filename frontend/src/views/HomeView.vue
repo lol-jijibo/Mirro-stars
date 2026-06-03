@@ -7,9 +7,10 @@
 import { ref, onMounted, onUnmounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import QuestionInput from '@/components/QuestionInput.vue'
+import ClarificationWizard from '@/components/ClarificationWizard.vue'
 import { streamQuestion, fetchQuestions } from '@/api/client'
 import { useQuestionStore } from '@/stores/question'
-import type { SolutionStep, Source, QuestionResponse } from '@/types'
+import type { SolutionStep, Source, QuestionResponse, ActionSummary } from '@/types'
 
 const router = useRouter()
 const route = useRoute()
@@ -24,32 +25,72 @@ const activeStream = ref<EventSource | null>(null)
 /** 错误消息 */
 const errorMessage = ref('')
 
+/** 是否显示提问澄清向导 */
+const showClarification = ref(false)
+/** 等待澄清的原始问题 */
+const pendingQuestion = ref('')
+
 /** 最近用户提问列表 */
 const recentQuestions = ref<QuestionResponse[]>([])
 /** 最近提问是否加载中 */
 const isQuestionsLoading = ref(false)
+/** AbortController — 组件卸载时取消未完成的请求 */
+let recentQuestionsAbort: AbortController | null = null
 
 /**
  * 加载最近用户提问
  */
 async function loadRecentQuestions() {
+  if (recentQuestionsAbort) recentQuestionsAbort.abort()
+  recentQuestionsAbort = new AbortController()
+
   isQuestionsLoading.value = true
   try {
-    const data = await fetchQuestions(1, 6)
+    const data = await fetchQuestions(1, 6, '', '', '', recentQuestionsAbort.signal)
     recentQuestions.value = data.items
-  } catch {
-    // 加载失败静默
+  } catch (err: any) {
+    if (err?.name !== 'AbortError') {
+      // 加载失败静默
+    }
   } finally {
     isQuestionsLoading.value = false
   }
 }
 
 /**
- * 处理用户提交问题 — 启动SSE流式生成
- * 业务逻辑：提交问题→重置store→建立SSE连接→逐阶段处理事件→完成后跳转答案页
+ * 判断是否需要先澄清问题
+ * 业务逻辑：短问题或带有宽泛求助词的问题，先收集背景以提升答案命中率。
+ */
+function shouldAskClarification(question: string) {
+  if (route.query.conversation_id) return false
+  const normalized = question.trim()
+  const broadSignals = ['怎么办', '怎么规划', '如何规划', '迷茫', '不知道', '怎么选择', '转行', '学习', '理财', '焦虑', '关系']
+  const hasSpecificDetail = /\d|个月|年|预算|每天|每周|基础|经验|城市|收入|目标/.test(normalized)
+  return normalized.length < 24 || (broadSignals.some(signal => normalized.includes(signal)) && !hasSpecificDetail)
+}
+
+/**
+ * 处理用户提交问题 — 必要时先打开澄清向导
+ * 业务逻辑：模糊问题先补充背景，具体问题直接进入SSE生成。
  */
 function handleSubmit(question: string) {
   errorMessage.value = ''
+  if (shouldAskClarification(question)) {
+    pendingQuestion.value = question
+    showClarification.value = true
+    return
+  }
+  startGeneration(question)
+}
+
+/**
+ * 启动SSE流式生成
+ * 业务逻辑：提交问题→重置store→建立SSE连接→逐阶段处理事件→完成后跳转答案页
+ */
+function startGeneration(question: string, clarificationContext = '') {
+  errorMessage.value = ''
+  showClarification.value = false
+  pendingQuestion.value = ''
   isGenerating.value = true
 
   // 检查URL中是否携带了conversation_id（从QuestionView追问跳转过来）
@@ -69,6 +110,12 @@ function handleSubmit(question: string) {
           break
         case 'type':
           store.setType(data as 'action' | 'insight')
+          break
+        case 'action_summary':
+          try {
+            const summary: ActionSummary = JSON.parse(data)
+            store.setActionSummary(summary)
+          } catch { /* JSON解析失败静默 */ }
           break
         case 'content':
           store.appendContent(data)
@@ -128,8 +175,27 @@ function handleSubmit(question: string) {
       activeStream.value = null
       store.reset()
     },
-    convId || undefined  // 传入 conversation_id（空字符串不传）
+    convId || undefined,  // 传入 conversation_id（空字符串不传）
+    clarificationContext || undefined
   )
+}
+
+/** 携带澄清信息继续生成 */
+function handleClarificationConfirm(context: string) {
+  if (!pendingQuestion.value) return
+  startGeneration(pendingQuestion.value, context)
+}
+
+/** 跳过澄清直接生成 */
+function handleClarificationSkip() {
+  if (!pendingQuestion.value) return
+  startGeneration(pendingQuestion.value)
+}
+
+/** 取消澄清面板 */
+function handleClarificationCancel() {
+  showClarification.value = false
+  pendingQuestion.value = ''
 }
 
 /**
@@ -145,20 +211,22 @@ function sendBrowserNotification() {
   if (!('Notification' in window)) return
 
   if (Notification.permission === 'granted') {
-    new Notification('Mirro AI', {
+    const notif = new Notification('Mirro AI', {
       body: '你的问题已解答完成，点击查看 →',
       icon: '/favicon.ico',
       tag: 'mirro-answer-done',
     })
+    setTimeout(() => notif.close(), 5000)  // 5秒后自动关闭通知弹窗
   } else if (Notification.permission === 'default') {
     // 首次请求权限
     Notification.requestPermission().then((permission) => {
       if (permission === 'granted') {
-        new Notification('Mirro AI', {
+        const notif = new Notification('Mirro AI', {
           body: '你的问题已解答完成，点击查看 →',
           icon: '/favicon.ico',
           tag: 'mirro-answer-done',
         })
+        setTimeout(() => notif.close(), 5000)  // 5秒后自动关闭通知弹窗
       }
     })
   }
@@ -171,6 +239,8 @@ function cancelGeneration() {
     activeStream.value = null
   }
   isGenerating.value = false
+  showClarification.value = false
+  pendingQuestion.value = ''
   store.reset()
 }
 
@@ -218,6 +288,12 @@ function arrowBgClass(idx: number) { return cardThemes[idx % cardThemes.length].
 function cardShadow(idx: number) { return cardThemes[idx % cardThemes.length].shadow }
 function cardHoverShadow(idx: number) { return cardThemes[idx % cardThemes.length].hoverShadow }
 
+/** 更新问题卡片阴影 */
+function updateCardShadow(e: Event, shadow: string) {
+  const target = e.currentTarget as HTMLElement | null
+  if (target) target.style.boxShadow = shadow
+}
+
 /** 跳转到问题详情页 */
 function goToQuestion(id: string) {
   router.push(`/question/${id}`)
@@ -241,12 +317,17 @@ onMounted(() => {
   if (followUp && followUp.trim().length >= 5) {
     // 清除 URL 中的 follow_up 参数（保留 conversation_id），防止刷新时重复提交
     router.replace({ path: '/', query: { conversation_id: route.query.conversation_id } })
-    handleSubmit(followUp.trim())
+    startGeneration(followUp.trim())
   }
 })
 
 onUnmounted(() => {
   window.removeEventListener('keydown', onGlobalKeydown)
+  // 取消未完成的请求，避免组件卸载后更新状态
+  if (recentQuestionsAbort) {
+    recentQuestionsAbort.abort()
+    recentQuestionsAbort = null
+  }
 })
 </script>
 
@@ -266,6 +347,13 @@ onUnmounted(() => {
     <!-- 提问输入区 — 核心交互 -->
     <div class="w-full max-w-2xl">
       <QuestionInput :loading="isGenerating" @submit="handleSubmit" />
+      <ClarificationWizard
+        v-if="showClarification"
+        :question="pendingQuestion"
+        @confirm="handleClarificationConfirm"
+        @skip="handleClarificationSkip"
+        @cancel="handleClarificationCancel"
+      />
     </div>
 
     <!-- 错误提示 -->
@@ -311,8 +399,8 @@ onUnmounted(() => {
             animation: 'fadeInUp 0.5s ease-out both',
           }"
           @click="goToQuestion(q.id)"
-          @mouseenter="(e) => { e.currentTarget.style.boxShadow = cardHoverShadow(idx) }"
-          @mouseleave="(e) => { e.currentTarget.style.boxShadow = cardShadow(idx) }"
+          @mouseenter="updateCardShadow($event, cardHoverShadow(idx))"
+          @mouseleave="updateCardShadow($event, cardShadow(idx))"
         >
           <!-- 背景光晕层 -->
           <div
@@ -336,26 +424,20 @@ onUnmounted(() => {
               {{ q.content }}
             </p>
 
-            <!-- 底部信息：时间 -->
-            <div class="flex items-center gap-1.5">
+            <!-- 底部信息：分类 + 时间 -->
+            <div class="flex items-center gap-2">
+              <span
+                v-if="q.category && q.category !== '分析中...'"
+                class="text-xs px-2 py-0.5 rounded-full bg-white/60 dark:bg-slate-800/60"
+                :class="metaClass(idx)"
+              >
+                {{ q.category }}
+              </span>
               <span class="text-xs opacity-60" :class="metaClass(idx)">
                 {{ formatTime(q.created_at) }}
               </span>
             </div>
 
-            <!-- 右下角查看提示 — hover 浮现 -->
-            <div
-              class="absolute -bottom-1 -right-1 opacity-0 group-hover:opacity-100 transition-all duration-300 translate-y-1 group-hover:translate-y-0"
-            >
-              <div
-                class="w-8 h-8 rounded-full flex items-center justify-center shadow-lg"
-                :class="arrowBgClass(idx)"
-              >
-                <svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M9 5l7 7-7 7" />
-                </svg>
-              </div>
-            </div>
           </div>
         </div>
       </div>

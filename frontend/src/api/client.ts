@@ -10,15 +10,16 @@ const API_BASE = '/api'
 /**
  * 通用GET请求
  * 用于获取问题列表、问题详情、统计数据等只读操作
+ * @param signal — AbortSignal，用于组件卸载时取消未完成的请求
  */
-export async function apiGet<T>(path: string, params?: Record<string, string | number>): Promise<T> {
+export async function apiGet<T>(path: string, params?: Record<string, string | number>, signal?: AbortSignal): Promise<T> {
   const url = new URL(`${API_BASE}${path}`, window.location.origin)
   if (params) {
     Object.entries(params).forEach(([key, value]) => {
       url.searchParams.set(key, String(value))
     })
   }
-  const res = await fetch(url.toString())
+  const res = await fetch(url.toString(), { signal })
   if (!res.ok) {
     throw new Error(`API 请求失败: ${res.status} ${res.statusText}`)
   }
@@ -28,12 +29,14 @@ export async function apiGet<T>(path: string, params?: Record<string, string | n
 /**
  * 通用POST请求
  * 用于提交新问题、搜索等写操作
+ * @param signal — AbortSignal，用于组件卸载时取消未完成的请求
  */
-export async function apiPost<T>(path: string, body: unknown): Promise<T> {
+export async function apiPost<T>(path: string, body: unknown, signal?: AbortSignal): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
+    signal,
   })
   if (!res.ok) {
     throw new Error(`API 请求失败: ${res.status} ${res.statusText}`)
@@ -44,12 +47,29 @@ export async function apiPost<T>(path: string, body: unknown): Promise<T> {
 /**
  * 通用DELETE请求
  * 用于删除问题记录
+ * @param signal — AbortSignal，用于组件卸载时取消未完成的请求
  */
-export async function apiDelete(path: string): Promise<void> {
-  const res = await fetch(`${API_BASE}${path}`, { method: 'DELETE' })
+export async function apiDelete(path: string, signal?: AbortSignal): Promise<void> {
+  const res = await fetch(`${API_BASE}${path}`, { method: 'DELETE', signal })
   if (!res.ok) {
     throw new Error(`API 请求失败: ${res.status} ${res.statusText}`)
   }
+}
+
+/**
+ * 通用PATCH请求
+ * 用于部分更新资源（如修改分类标签）
+ */
+export async function apiPatch<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(`${API_BASE}${path}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) {
+    throw new Error(`API 请求失败: ${res.status} ${res.statusText}`)
+  }
+  return res.json()
 }
 
 /**
@@ -67,7 +87,8 @@ export function streamQuestion(
   question: string,
   onEvent: (type: string, data: string) => void,
   onError?: (error: string) => void,
-  conversationId?: string
+  conversationId?: string,
+  clarificationContext?: string
 ): EventSource {
   // 通过POST无法直接使用EventSource（只支持GET），改用fetch+ReadableStream
   // 这里使用fetch POST + SSE解析
@@ -76,6 +97,9 @@ export function streamQuestion(
   const body: Record<string, string> = { content: question }
   if (conversationId) {
     body.conversation_id = conversationId
+  }
+  if (clarificationContext) {
+    body.clarification_context = clarificationContext
   }
 
   fetch(`${API_BASE}/questions`, {
@@ -146,24 +170,29 @@ export function streamQuestion(
 }
 
 /** 获取问题历史列表（支持搜索、分类筛选和排除指定ID） */
-export function fetchQuestions(page = 1, size = 20, search = '', category = '', exclude = '') {
+export function fetchQuestions(page = 1, size = 20, search = '', category = '', exclude = '', signal?: AbortSignal) {
   const params: Record<string, string | number> = { page, size }
   if (search) params.search = search
   if (category) params.category = category
   if (exclude) params.exclude = exclude
   return apiGet<{ items: import('@/types').QuestionResponse[]; total: number; page: number; size: number }>(
-    '/questions', params
+    '/questions', params, signal
   )
 }
 
 /** 获取问题详情（含答案） */
-export function fetchQuestionDetail(id: string) {
-  return apiGet<import('@/types').QuestionDetail>(`/questions/${id}`)
+export function fetchQuestionDetail(id: string, signal?: AbortSignal) {
+  return apiGet<import('@/types').QuestionDetail>(`/questions/${id}`, undefined, signal)
 }
 
 /** 删除问题 */
-export function deleteQuestion(id: string) {
-  return apiDelete(`/questions/${id}`)
+export function deleteQuestion(id: string, signal?: AbortSignal) {
+  return apiDelete(`/questions/${id}`, signal)
+}
+
+/** 批量删除问题 */
+export function batchDeleteQuestions(ids: string[], signal?: AbortSignal) {
+  return apiPost<{ message: string; deleted_count: number }>('/questions/batch-delete', { ids }, signal)
 }
 
 /** 手动搜索 */
@@ -172,8 +201,8 @@ export function searchWeb(query: string, maxResults = 5) {
 }
 
 /** 获取统计数据 */
-export function fetchStats() {
-  return apiGet<import('@/types').StatsOverview>('/questions/stats')
+export function fetchStats(signal?: AbortSignal) {
+  return apiGet<import('@/types').StatsOverview>('/questions/stats', undefined, signal)
 }
 
 /** 提交答案反馈 */
@@ -182,16 +211,24 @@ export function submitFeedback(questionId: string, feedback: import('@/types').F
 }
 
 /** 获取某问题的反馈记录 */
-export function fetchFeedback(questionId: string) {
-  return apiGet<{ feedbacks: import('@/types').FeedbackResponse[] }>(`/questions/${questionId}/feedback`)
+export function fetchFeedback(questionId: string, signal?: AbortSignal) {
+  return apiGet<{ feedbacks: import('@/types').FeedbackResponse[] }>(`/questions/${questionId}/feedback`, undefined, signal)
 }
 
 /** 根据answer_id获取答案及关联问题（分享页用） */
-export function fetchAnswerByAnswerId(answerId: string) {
-  return apiGet<import('@/types').AnswerWithQuestion>(`/answers/${answerId}`)
+export function fetchAnswerByAnswerId(answerId: string, signal?: AbortSignal) {
+  return apiGet<import('@/types').AnswerWithQuestion>(`/answers/${answerId}`, undefined, signal)
 }
 
 /** 获取AI生成的相关追问建议（答案页底部推荐） */
-export function fetchRelatedQuestions(questionId: string) {
-  return apiGet<{ related_questions: string[] }>(`/questions/${questionId}/related`)
+export function fetchRelatedQuestions(questionId: string, signal?: AbortSignal) {
+  return apiGet<{ related_questions: string[] }>(`/questions/${questionId}/related`, undefined, signal)
+}
+
+/** 手动修改问题分类标签 */
+export function updateQuestionCategory(questionId: string, category: string) {
+  return apiPatch<{ message: string; question_id: string; category: string }>(
+    `/questions/${questionId}/category`,
+    { category }
+  )
 }

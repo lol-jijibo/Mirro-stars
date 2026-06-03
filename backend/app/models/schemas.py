@@ -24,6 +24,11 @@ class QuestionCreate(BaseModel):
         None,
         description="多轮对话的会话ID。传入此字段表示该问题是某次对话的追问，后端会将历史问答拼接进LLM上下文"
     )
+    clarification_context: Optional[str] = Field(
+        None,
+        max_length=800,
+        description="提问前澄清向导收集到的补充信息，只参与AI生成上下文，不覆盖原始问题"
+    )
 
 
 class Source(BaseModel):
@@ -47,6 +52,18 @@ class SolutionStep(BaseModel):
     duration: str = Field(..., description="预计耗时，如'2-3个月'")
 
 
+class ActionSummary(BaseModel):
+    """
+    答案顶部行动摘要
+    业务场景：将长答案压缩为用户一眼能执行和判断的关键提示
+    """
+    conclusion: str = Field(..., description="核心结论，2-3句话概括答案重点")
+    first_action: str = Field(..., description="用户现在最应该先做的一件事")
+    timeframe: str = Field(..., description="整体建议周期或见效时间")
+    risk: str = Field(..., description="执行中最需要注意的风险")
+    fit_for: str = Field(..., description="该方案最适合的人群或场景")
+
+
 class AnswerResponse(BaseModel):
     """
     答案的完整响应结构
@@ -59,6 +76,7 @@ class AnswerResponse(BaseModel):
     flowchart_mermaid: Optional[str] = Field(None, description="Mermaid流程图语法，前端用mermaid.js渲染")
     steps: list[SolutionStep] = Field(default_factory=list, description="分步执行计划")
     sources: list[Source] = Field(default_factory=list, description="AI搜索引用的来源列表")
+    action_summary: Optional[ActionSummary] = Field(None, description="答案顶部行动摘要，帮助用户快速抓住下一步")
     related_questions: list[str] = Field(default_factory=list, description="AI生成的相关追问建议，在生成答案时一并产出")
     created_at: str = Field(..., description="生成时间")
 
@@ -122,6 +140,14 @@ class AnswerWithQuestion(BaseModel):
     """
     answer: AnswerResponse = Field(..., description="答案详情")
     question: QuestionResponse = Field(..., description="关联的问题信息")
+
+
+class CategoryUpdate(BaseModel):
+    """
+    手动修改问题分类的请求体
+    业务场景：用户在历史列表中点击分类标签，从下拉菜单选择新分类。
+    """
+    category: str = Field(..., min_length=1, max_length=50, description="新的分类名称，8个有效分类之一")
 
 
 class FeedbackCreate(BaseModel):

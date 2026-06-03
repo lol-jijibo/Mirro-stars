@@ -6,7 +6,7 @@
  */
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import type { SolutionStep, Source } from '@/types'
+import type { SolutionStep, Source, ActionSummary } from '@/types'
 
 export const useQuestionStore = defineStore('question', () => {
   // ========== 流式生成状态（SSE过程中实时更新） ==========
@@ -28,6 +28,9 @@ export const useQuestionStore = defineStore('question', () => {
 
   /** 分步执行计划 */
   const streamingSteps = ref<SolutionStep[]>([])
+
+  /** 答案顶部行动摘要 */
+  const streamingActionSummary = ref<ActionSummary | null>(null)
 
   /** AI生成的相关推荐追问 */
   const streamingRelatedQuestions = ref<string[]>([])
@@ -66,6 +69,7 @@ export const useQuestionStore = defineStore('question', () => {
     streamingType.value = 'insight'
     streamingFlowchart.value = ''
     streamingSteps.value = []
+    streamingActionSummary.value = null
     streamingRelatedQuestions.value = []
     streamingSources.value = []
     isStreaming.value = true
@@ -102,6 +106,11 @@ export const useQuestionStore = defineStore('question', () => {
     streamingSteps.value = steps
   }
 
+  /** 设置答案顶部行动摘要 */
+  function setActionSummary(summary: ActionSummary) {
+    streamingActionSummary.value = summary
+  }
+
   /** 设置相关推荐 */
   function setRelatedQuestions(questions: string[]) {
     streamingRelatedQuestions.value = questions
@@ -129,6 +138,7 @@ export const useQuestionStore = defineStore('question', () => {
     streamingType.value = 'insight'
     streamingFlowchart.value = ''
     streamingSteps.value = []
+    streamingActionSummary.value = null
     streamingRelatedQuestions.value = []
     streamingSources.value = []
     isStreaming.value = false
@@ -147,6 +157,7 @@ export const useQuestionStore = defineStore('question', () => {
     streamingType,
     streamingFlowchart,
     streamingSteps,
+    streamingActionSummary,
     streamingRelatedQuestions,
     streamingSources,
     isStreaming,
@@ -162,6 +173,7 @@ export const useQuestionStore = defineStore('question', () => {
     setType,
     setFlowchart,
     setSteps,
+    setActionSummary,
     setRelatedQuestions,
     setSources,
     finishStreaming,

@@ -12,10 +12,12 @@ import { useRoute } from 'vue-router'
 import { fetchAnswerByAnswerId } from '@/api/client'
 import type { AnswerWithQuestion } from '@/types'
 import StreamingAnswer from '@/components/StreamingAnswer.vue'
+import ActionSummaryPanel from '@/components/ActionSummaryPanel.vue'
 import FlowchartViewer from '@/components/FlowchartViewer.vue'
 import SolutionSteps from '@/components/SolutionSteps.vue'
 import SourceList from '@/components/SourceList.vue'
 import SkeletonLoader from '@/components/SkeletonLoader.vue'
+import ReadingProgress from '@/components/ReadingProgress.vue'
 
 const route = useRoute()
 
@@ -80,6 +82,8 @@ onMounted(async () => {
 
 <template>
   <div class="space-y-6">
+    <!-- 阅读进度条 + 回到顶部 -->
+    <ReadingProgress />
     <!-- 加载中 — 骨架屏 -->
     <SkeletonLoader v-if="isLoading" type="answer" />
 
@@ -133,6 +137,12 @@ onMounted(async () => {
         </div>
       </div>
 
+      <!-- 顶部行动摘要 -->
+      <ActionSummaryPanel
+        v-if="data.answer.action_summary"
+        :summary="data.answer.action_summary"
+      />
+
       <!-- AI答案正文 — Markdown渲染 -->
       <section>
         <h2 class="text-lg font-semibold text-slate-800 dark:text-slate-200 mb-3 flex items-center gap-3">
@@ -162,7 +172,7 @@ onMounted(async () => {
       <!-- 分步执行计划 -->
       <section v-if="data.answer.steps.length > 0">
         <h2 class="text-lg font-semibold text-slate-800 dark:text-slate-200 mb-3">📋 分步执行计划</h2>
-        <SolutionSteps :steps="data.answer.steps" />
+        <SolutionSteps :steps="data.answer.steps" readonly />
       </section>
 
       <!-- 参考案例与来源 -->

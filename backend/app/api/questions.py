@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from app.models.database import get_db
-from app.models.schemas import QuestionCreate, QuestionResponse, QuestionDetail, AnswerResponse, AnswerWithQuestion, Source, SolutionStep, FeedbackCreate, FeedbackResponse
+from app.models.schemas import QuestionCreate, QuestionResponse, QuestionDetail, AnswerResponse, AnswerWithQuestion, Source, SolutionStep, ActionSummary, CategoryUpdate, FeedbackCreate, FeedbackResponse
 from app.services.ai_service import generate_answer, classify_question, generate_related_questions
 from app.services.search_service import search_related_resources
 from app.services.flowchart_service import validate_mermaid, generate_fallback_flowchart
@@ -18,7 +18,7 @@ from app.services.flowchart_service import validate_mermaid, generate_fallback_f
 router = APIRouter(prefix="/api/questions", tags=["问题管理"])
 
 
-async def _stream_answer(question_id: str, content: str, category: str, conversation_id: str | None = None):
+async def _stream_answer(question_id: str, content: str, category: str, conversation_id: str | None = None, clarification_context: str | None = None):
     """
     SSE流式返回答案的核心生成器
     业务逻辑：
@@ -31,7 +31,7 @@ async def _stream_answer(question_id: str, content: str, category: str, conversa
     7. 前端根据event类型分别渲染不同区域
 
     SSE事件类型说明：
-    - category:  问题分类结果（初始占位，后台分类完成后发送真实分类更新）
+    - category:  问题分类结果（已在create_question中同步完成，直接发送真实分类）
     - searching:  开始全网搜索
     - type:      答案类型（action=含步骤计划 / insight=纯深度分析），前端据此决定是否渲染步骤和流程图区域
     - content:   Markdown正文内容（逐块发送，前端拼接）
@@ -43,44 +43,48 @@ async def _stream_answer(question_id: str, content: str, category: str, conversa
     """
     now = datetime.now(timezone.utc).isoformat()
 
-    # ===== 阶段0：保存问题 + 启动后台任务 =====
+    # ===== 阶段0：保存问题 + 获取对话历史（同一个连接完成，用完即归还） =====
+    conversation_history = None
     try:
-        db = await get_db()
-        await db.execute(
-            "INSERT INTO questions (id, content, category, conversation_id, created_at) VALUES (?, ?, ?, ?, ?)",
-            (question_id, content, category, conversation_id, now)
-        )
-        await db.commit()
+        async with get_db() as db:
+            await db.execute(
+                "INSERT INTO questions (id, content, category, conversation_id, created_at) VALUES (?, ?, ?, ?, ?)",
+                (question_id, content, category, conversation_id, now)
+            )
+            await db.commit()
+
+            # 阶段0.5：获取多轮对话历史（如果是追问）
+            if conversation_id:
+                try:
+                    history_rows = await db.execute_fetchall(
+                        """SELECT q.content, a.content as answer_content
+                           FROM questions q
+                           LEFT JOIN answers a ON q.id = a.question_id
+                           WHERE (q.id = ? OR q.conversation_id = ?) AND a.content IS NOT NULL
+                           ORDER BY q.created_at ASC""",
+                        (conversation_id, conversation_id)
+                    )
+                    if history_rows:
+                        conversation_history = []
+                        for row in history_rows:
+                            conversation_history.append({"role": "user", "content": row[0]})
+                            if row[1]:
+                                # 截断过长历史，每段最多保留2000字
+                                truncated = row[1][:2000] + ("..." if len(row[1]) > 2000 else "")
+                                conversation_history.append({"role": "assistant", "content": truncated})
+                except Exception as e:
+                    print(f"[SSE] 获取对话历史失败: {e}")
     except Exception as e:
         yield f"event: error\ndata: {json.dumps({'message': f'数据库写入失败: {str(e)}'}, ensure_ascii=False)}\n\n"
         return
 
-    # 启动后台任务：分类 + 搜索（与AI生成并发执行，不阻塞主流程）
-    classify_task = asyncio.create_task(classify_question(content))
-    search_task = asyncio.create_task(search_related_resources(content))
+    generation_content = content
+    if clarification_context and clarification_context.strip():
+        generation_content = f"{content}\n\n用户补充信息：\n{clarification_context.strip()}"
 
-    # 阶段0.5：获取多轮对话历史（如果是追问）
-    conversation_history = None
-    if conversation_id:
-        try:
-            history_rows = await db.execute_fetchall(
-                """SELECT q.content, a.content as answer_content
-                   FROM questions q
-                   LEFT JOIN answers a ON q.id = a.question_id
-                   WHERE (q.id = ? OR q.conversation_id = ?) AND a.content IS NOT NULL
-                   ORDER BY q.created_at ASC""",
-                (conversation_id, conversation_id)
-            )
-            if history_rows:
-                conversation_history = []
-                for row in history_rows:
-                    conversation_history.append({"role": "user", "content": row[0]})
-                    if row[1]:
-                        # 截断过长历史，每段最多保留2000字
-                        truncated = row[1][:2000] + ("..." if len(row[1]) > 2000 else "")
-                        conversation_history.append({"role": "assistant", "content": truncated})
-        except Exception as e:
-            print(f"[SSE] 获取对话历史失败: {e}")
+    # 启动后台任务：搜索（与AI生成并发执行，不阻塞主流程）
+    # 分类已在 create_question 中同步完成，此处无需再分类
+    search_task = asyncio.create_task(search_related_resources(generation_content))
 
     # 阶段1：发送初始分类结果（占位，后台分类完成后会发送更新）
     yield f"event: category\ndata: {category}\n\n"
@@ -90,7 +94,7 @@ async def _stream_answer(question_id: str, content: str, category: str, conversa
 
     # 阶段3：调用AI生成结构化答案（立即开始，不等待搜索/分类）
     try:
-        ai_result = await generate_answer(content, history=conversation_history)
+        ai_result = await generate_answer(generation_content, history=conversation_history)
     except RuntimeError as e:
         yield f"event: error\ndata: {json.dumps({'message': f'AI服务暂时不可用，请稍后重试: {str(e)}'}, ensure_ascii=False)}\n\n"
         return
@@ -104,6 +108,11 @@ async def _stream_answer(question_id: str, content: str, category: str, conversa
     # 阶段3.5：发送答案类型（前端据此决定是否渲染步骤/流程图区域）
     answer_type = ai_result.get("type", "insight")
     yield f"event: type\ndata: {answer_type}\n\n"
+
+    # 阶段3.6：发送顶部行动摘要，让用户先看到结论、下一步和风险
+    action_summary = ai_result.get("action_summary") or {}
+    if isinstance(action_summary, dict) and action_summary:
+        yield f"event: action_summary\ndata: {json.dumps(action_summary, ensure_ascii=False)}\n\n"
 
     # 阶段4：逐块发送Markdown正文（模拟流式打字机效果）
     # 按段落分割，每次发送一段，给前端时间渲染
@@ -135,57 +144,39 @@ async def _stream_answer(question_id: str, content: str, category: str, conversa
         yield f"event: related_questions\ndata: {json.dumps(related_questions, ensure_ascii=False)}\n\n"
 
     # ===== 阶段7：收集后台任务结果 =====
-    # AI内容已全部发送完毕，现在等待分类和搜索的后台结果
+    # AI内容已全部发送完毕，分类已在 create_question 中同步完成
 
-    # 7a. 获取真实分类
-    try:
-        real_category = await classify_task
-    except Exception:
-        real_category = category  # 分类失败，用占位值兜底
-
-    # 7b. 更新数据库中问题的真实分类
-    if real_category != category:
-        try:
-            await db.execute(
-                "UPDATE questions SET category = ? WHERE id = ?",
-                (real_category, question_id)
-            )
-            await db.commit()
-        except Exception as e:
-            print(f"[SSE] 分类更新失败: {e}")
-
-    # 7c. 发送真实分类（前端会覆盖之前的占位值）
-    yield f"event: category\ndata: {real_category}\n\n"
-
-    # 7d. 获取搜索结果
+    # 7a. 获取搜索结果
     try:
         sources = await search_task
     except Exception:
         sources = []
         print(f"[SSE] 搜索任务异常，返回空结果")
 
-    # 7e. 发送搜索来源
+    # 7b. 发送搜索来源
     yield f"event: sources\ndata: {json.dumps(sources, ensure_ascii=False)}\n\n"
 
     # ===== 阶段8：保存完整答案到数据库 =====
     answer_id = str(uuid.uuid4())
     try:
-        await db.execute(
-            """INSERT INTO answers (id, question_id, content, answer_type, flowchart_mermaid, steps, sources, related_questions, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                answer_id,
-                question_id,
-                markdown_content,
-                answer_type,
-                flowchart,
-                json.dumps(steps, ensure_ascii=False),
-                json.dumps(sources, ensure_ascii=False),
-                json.dumps(related_questions, ensure_ascii=False),
-                now
+        async with get_db() as db:
+            await db.execute(
+                """INSERT INTO answers (id, question_id, content, answer_type, flowchart_mermaid, steps, sources, action_summary, related_questions, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    answer_id,
+                    question_id,
+                    markdown_content,
+                    answer_type,
+                    flowchart,
+                    json.dumps(steps, ensure_ascii=False),
+                    json.dumps(sources, ensure_ascii=False),
+                    json.dumps(action_summary, ensure_ascii=False),
+                    json.dumps(related_questions, ensure_ascii=False),
+                    now
+                )
             )
-        )
-        await db.commit()
+            await db.commit()
     except Exception as e:
         print(f"[SSE] 答案保存失败: {e}")
 
@@ -202,10 +193,17 @@ async def create_question(body: QuestionCreate):
     流式推送内容：分类→搜索来源→正文段落→流程图→步骤计划→完成通知
     """
     question_id = str(uuid.uuid4())
-    category = "分析中..."  # 先占位，分类在流式过程中更新
+
+    # 先同步执行分类，确保问题入库时就有正确的分类
+    # 之前分类是SSE流末尾才异步完成的——如果用户中途关闭页面，
+    # 分类永远不会写入DB，导致历史页大量问题无分类标签。
+    try:
+        category = await classify_question(body.content)
+    except Exception:
+        category = "其他"  # 分类失败时使用默认分类
 
     return StreamingResponse(
-        _stream_answer(question_id, body.content, category, body.conversation_id),
+        _stream_answer(question_id, body.content, category, body.conversation_id, body.clarification_context),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -222,45 +220,45 @@ async def list_questions(page: int = 1, size: int = 20, search: str = "", catego
     业务场景：历史页面展示用户所有提问，按时间倒序排列。
     支持按关键词搜索问题内容、按分类筛选、以及排除指定问题ID（相关推荐用）。
     """
-    db = await get_db()
-    offset = (page - 1) * size
+    async with get_db() as db:
+        offset = (page - 1) * size
 
-    # 动态构建WHERE条件
-    conditions = []
-    params: list = []
+        # 动态构建WHERE条件
+        conditions = []
+        params: list = []
 
-    if search.strip():
-        conditions.append("content LIKE ?")
-        params.append(f"%{search.strip()}%")
+        if search.strip():
+            conditions.append("content LIKE ?")
+            params.append(f"%{search.strip()}%")
 
-    if category.strip():
-        conditions.append("category = ?")
-        params.append(category.strip())
+        if category.strip():
+            conditions.append("category = ?")
+            params.append(category.strip())
 
-    if exclude.strip():
-        conditions.append("id != ?")
-        params.append(exclude.strip())
+        if exclude.strip():
+            conditions.append("id != ?")
+            params.append(exclude.strip())
 
-    where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+        where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
 
-    # 查询问题总数（用于前端分页器）
-    count_sql = f"SELECT COUNT(*) as count FROM questions {where_clause}"
-    total_row = await db.execute_fetchall(count_sql, tuple(params))
-    total = total_row[0][0] if total_row else 0
+        # 查询问题总数（用于前端分页器）
+        count_sql = f"SELECT COUNT(*) as count FROM questions {where_clause}"
+        total_row = await db.execute_fetchall(count_sql, tuple(params))
+        total = total_row[0][0] if total_row else 0
 
-    # 查询当前页的问题列表，按创建时间倒序
-    query_params = list(params) + [size, offset]
-    query_sql = f"SELECT id, content, category, created_at FROM questions {where_clause} ORDER BY created_at DESC LIMIT ? OFFSET ?"
-    rows = await db.execute_fetchall(query_sql, tuple(query_params))
+        # 查询当前页的问题列表，按创建时间倒序
+        query_params = list(params) + [size, offset]
+        query_sql = f"SELECT id, content, category, created_at FROM questions {where_clause} ORDER BY created_at DESC LIMIT ? OFFSET ?"
+        rows = await db.execute_fetchall(query_sql, tuple(query_params))
 
-    questions = []
-    for row in rows:
-        questions.append(QuestionResponse(
-            id=row[0],
-            content=row[1],
-            category=row[2],
-            created_at=row[3]
-        ).model_dump())
+        questions = []
+        for row in rows:
+            questions.append(QuestionResponse(
+                id=row[0],
+                content=row[1],
+                category=row[2],
+                created_at=row[3]
+            ).model_dump())
 
     return {"items": questions, "total": total, "page": page, "size": size}
 
@@ -271,27 +269,26 @@ async def get_stats() -> dict:
     获取问题统计数据
     业务场景：统计看板页面的图表数据来源。返回分类分布和提问趋势。
     """
-    db = await get_db()
+    async with get_db() as db:
+        # 按分类统计问题数量（饼图数据）
+        category_rows = await db.execute_fetchall(
+            "SELECT category, COUNT(*) as count FROM questions GROUP BY category ORDER BY count DESC"
+        )
+        categories = [{"name": row[0] or "未分类", "count": row[1]} for row in category_rows]
 
-    # 按分类统计问题数量（饼图数据）
-    category_rows = await db.execute_fetchall(
-        "SELECT category, COUNT(*) as count FROM questions GROUP BY category ORDER BY count DESC"
-    )
-    categories = [{"name": row[0] or "未分类", "count": row[1]} for row in category_rows]
+        # 按日期统计提问数量（趋势图数据）
+        date_rows = await db.execute_fetchall(
+            "SELECT LEFT(created_at, 10) as date, COUNT(*) as count FROM questions GROUP BY LEFT(created_at, 10) ORDER BY date"
+        )
+        daily_trend = [{"date": row[0], "count": row[1]} for row in date_rows]
 
-    # 按日期统计提问数量（趋势图数据）
-    date_rows = await db.execute_fetchall(
-        "SELECT DATE(created_at) as date, COUNT(*) as count FROM questions GROUP BY DATE(created_at) ORDER BY date"
-    )
-    daily_trend = [{"date": row[0], "count": row[1]} for row in date_rows]
+        # 总问题数
+        total_row = await db.execute_fetchall("SELECT COUNT(*) FROM questions")
+        total = total_row[0][0] if total_row else 0
 
-    # 总问题数
-    total_row = await db.execute_fetchall("SELECT COUNT(*) FROM questions")
-    total = total_row[0][0] if total_row else 0
-
-    # 总答案数（解决率）
-    answer_row = await db.execute_fetchall("SELECT COUNT(*) FROM answers")
-    answered = answer_row[0][0] if answer_row else 0
+        # 总答案数（解决率）
+        answer_row = await db.execute_fetchall("SELECT COUNT(*) FROM answers")
+        answered = answer_row[0][0] if answer_row else 0
 
     return {
         "total_questions": total,
@@ -307,48 +304,49 @@ async def get_question(question_id: str) -> QuestionDetail:
     获取问题详情（含答案）
     业务场景：用户点击历史列表中的某条记录，或答案页直接访问时加载完整数据。
     """
-    db = await get_db()
-
-    # 查询问题
-    row = await db.execute_fetchall(
-        "SELECT id, content, category, created_at FROM questions WHERE id = ?",
-        (question_id,)
-    )
-    if not row:
-        raise HTTPException(status_code=404, detail="问题不存在")
-
-    question = QuestionResponse(
-        id=row[0][0],
-        content=row[0][1],
-        category=row[0][2],
-        created_at=row[0][3]
-    )
-
-    # 查询关联的答案
-    answer = None
-    answer_row = await db.execute_fetchall(
-        "SELECT id, question_id, content, answer_type, flowchart_mermaid, steps, sources, related_questions, created_at FROM answers WHERE question_id = ?",
-        (question_id,)
-    )
-    if answer_row:
-        row_data = answer_row[0]
-        # 解析JSON字符串
-        answer_type = row_data[3] if len(row_data) > 3 and row_data[3] else "insight"
-        steps_data = json.loads(row_data[5]) if row_data[5] else []
-        sources_data = json.loads(row_data[6]) if row_data[6] else []
-        related_questions_data = json.loads(row_data[7]) if len(row_data) > 7 and row_data[7] else []
-
-        answer = AnswerResponse(
-            id=row_data[0],
-            question_id=row_data[1],
-            type=answer_type,
-            content=row_data[2] or "",
-            flowchart_mermaid=row_data[4],
-            steps=[SolutionStep(**s) for s in steps_data],
-            sources=[Source(**s) for s in sources_data],
-            related_questions=related_questions_data,
-            created_at=row_data[8]
+    async with get_db() as db:
+        # 查询问题
+        row = await db.execute_fetchall(
+            "SELECT id, content, category, created_at FROM questions WHERE id = ?",
+            (question_id,)
         )
+        if not row:
+            raise HTTPException(status_code=404, detail="问题不存在")
+
+        question = QuestionResponse(
+            id=row[0][0],
+            content=row[0][1],
+            category=row[0][2],
+            created_at=row[0][3]
+        )
+
+        # 查询关联的答案
+        answer = None
+        answer_row = await db.execute_fetchall(
+            "SELECT id, question_id, content, answer_type, flowchart_mermaid, steps, sources, action_summary, related_questions, created_at FROM answers WHERE question_id = ?",
+            (question_id,)
+        )
+        if answer_row:
+            row_data = answer_row[0]
+            # 解析JSON字符串
+            answer_type = row_data[3] if len(row_data) > 3 and row_data[3] else "insight"
+            steps_data = json.loads(row_data[5]) if row_data[5] else []
+            sources_data = json.loads(row_data[6]) if row_data[6] else []
+            action_summary_data = json.loads(row_data[7]) if len(row_data) > 7 and row_data[7] else None
+            related_questions_data = json.loads(row_data[8]) if len(row_data) > 8 and row_data[8] else []
+
+            answer = AnswerResponse(
+                id=row_data[0],
+                question_id=row_data[1],
+                type=answer_type,
+                content=row_data[2] or "",
+                flowchart_mermaid=row_data[4],
+                steps=[SolutionStep(**s) for s in steps_data],
+                sources=[Source(**s) for s in sources_data],
+                action_summary=ActionSummary(**action_summary_data) if action_summary_data else None,
+                related_questions=related_questions_data,
+                created_at=row_data[9]
+            )
 
     return QuestionDetail(
         id=question.id,
@@ -366,42 +364,43 @@ async def get_related_questions(question_id: str) -> dict:
     优先从数据库读取（AI生成答案时一并产出，零额外消耗），
     仅当旧数据无此字段时才降级调用AI实时生成。
     """
-    db = await get_db()
+    async with get_db() as db:
+        # 优先从 answers 表读取已缓存的相关推荐
+        a_rows = await db.execute_fetchall(
+            "SELECT related_questions, content FROM answers WHERE question_id = ?",
+            (question_id,)
+        )
+        if a_rows and a_rows[0][0]:
+            try:
+                cached = json.loads(a_rows[0][0])
+                if isinstance(cached, list) and cached:
+                    return {"related_questions": cached}
+            except (json.JSONDecodeError, TypeError):
+                pass
 
-    # 优先从 answers 表读取已缓存的相关推荐
-    a_rows = await db.execute_fetchall(
-        "SELECT related_questions, content FROM answers WHERE question_id = ?",
-        (question_id,)
-    )
-    if a_rows and a_rows[0][0]:
-        try:
-            cached = json.loads(a_rows[0][0])
-            if isinstance(cached, list) and cached:
-                return {"related_questions": cached}
-        except (json.JSONDecodeError, TypeError):
-            pass
+        # 降级：旧数据无缓存时，实时调用AI生成
+        q_rows = await db.execute_fetchall(
+            "SELECT content FROM questions WHERE id = ?",
+            (question_id,)
+        )
+        if not q_rows:
+            raise HTTPException(status_code=404, detail="问题不存在")
 
-    # 降级：旧数据无缓存时，实时调用AI生成
-    q_rows = await db.execute_fetchall(
-        "SELECT content FROM questions WHERE id = ?",
-        (question_id,)
-    )
-    if not q_rows:
-        raise HTTPException(status_code=404, detail="问题不存在")
+        question_content = q_rows[0][0]
+        answer_content = a_rows[0][1] if a_rows else ""
 
-    question_content = q_rows[0][0]
-    answer_content = a_rows[0][1] if a_rows else ""
-
+    # AI 调用在 async with 块外执行，不持有数据库连接
     suggestions = await generate_related_questions(question_content, answer_content)
 
     # 回写缓存，下次访问直接读库
     if suggestions and a_rows:
         try:
-            await db.execute(
-                "UPDATE answers SET related_questions = ? WHERE question_id = ?",
-                (json.dumps(suggestions, ensure_ascii=False), question_id)
-            )
-            await db.commit()
+            async with get_db() as db2:
+                await db2.execute(
+                    "UPDATE answers SET related_questions = ? WHERE question_id = ?",
+                    (json.dumps(suggestions, ensure_ascii=False), question_id)
+                )
+                await db2.commit()
         except Exception as e:
             print(f"[相关推荐] 缓存回写失败: {e}")
 
@@ -415,10 +414,57 @@ async def delete_question(question_id: str) -> dict:
     业务场景：用户删除历史列表中的某条提问记录。
     数据库设置了CASCADE外键，删除问题会自动删除关联的答案。
     """
-    db = await get_db()
-    await db.execute("DELETE FROM questions WHERE id = ?", (question_id,))
-    await db.commit()
+    async with get_db() as db:
+        await db.execute("DELETE FROM questions WHERE id = ?", (question_id,))
+        await db.commit()
     return {"message": "已删除", "question_id": question_id}
+
+
+VALID_CATEGORIES = ["职业发展", "情感关系", "个人成长", "理财规划", "健康生活", "社交技巧", "技术学习", "其他"]
+
+
+@router.patch("/{question_id}/category")
+async def update_question_category(question_id: str, body: CategoryUpdate) -> dict:
+    """
+    手动修改问题分类标签
+    业务场景：用户在历史列表中点击分类标签，从下拉菜单选择新分类。
+    """
+    if body.category not in VALID_CATEGORIES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"无效分类，有效值为: {', '.join(VALID_CATEGORIES)}"
+        )
+
+    async with get_db() as db:
+        rows = await db.execute_fetchall(
+            "SELECT id FROM questions WHERE id = ?", (question_id,)
+        )
+        if not rows:
+            raise HTTPException(status_code=404, detail="问题不存在")
+
+        await db.execute(
+            "UPDATE questions SET category = ? WHERE id = ?",
+            (body.category, question_id)
+        )
+        await db.commit()
+
+    return {"message": "分类已更新", "question_id": question_id, "category": body.category}
+
+
+@router.post("/batch-delete")
+async def batch_delete_questions(body: dict) -> dict:
+    """
+    批量删除问题
+    业务场景：用户在历史列表页勾选多条记录后一键删除。
+    """
+    ids: list[str] = body.get("ids", [])
+    if not ids:
+        raise HTTPException(status_code=400, detail="ids 不能为空")
+    async with get_db() as db:
+        placeholders = ",".join(["?"] * len(ids))
+        await db.execute(f"DELETE FROM questions WHERE id IN ({placeholders})", tuple(ids))
+        await db.commit()
+    return {"message": f"已删除 {len(ids)} 条记录", "deleted_count": len(ids)}
 
 
 @router.post("/{question_id}/feedback")
@@ -430,28 +476,28 @@ async def submit_feedback(question_id: str, body: FeedbackCreate) -> dict:
     """
     now = datetime.now(timezone.utc).isoformat()
     feedback_id = str(uuid.uuid4())
-    db = await get_db()
 
-    # 检查问题是否存在
-    rows = await db.execute_fetchall("SELECT id FROM questions WHERE id = ?", (question_id,))
-    if not rows:
-        raise HTTPException(status_code=404, detail="问题不存在")
+    async with get_db() as db:
+        # 检查问题是否存在
+        rows = await db.execute_fetchall("SELECT id FROM questions WHERE id = ?", (question_id,))
+        if not rows:
+            raise HTTPException(status_code=404, detail="问题不存在")
 
-    # 检查答案是否存在
-    answer_rows = await db.execute_fetchall("SELECT id FROM answers WHERE id = ? AND question_id = ?", (body.answer_id, question_id))
-    if not answer_rows:
-        raise HTTPException(status_code=404, detail="答案不存在")
+        # 检查答案是否存在
+        answer_rows = await db.execute_fetchall("SELECT id FROM answers WHERE id = ? AND question_id = ?", (body.answer_id, question_id))
+        if not answer_rows:
+            raise HTTPException(status_code=404, detail="答案不存在")
 
-    try:
-        await db.execute(
-            """INSERT INTO feedback (id, question_id, answer_id, rating, comment, created_at)
-               VALUES (?, ?, ?, ?, ?, ?)""",
-            (feedback_id, question_id, body.answer_id, body.rating, body.comment, now)
-        )
-        await db.commit()
-    except Exception as e:
-        print(f"[Feedback] 保存反馈失败: {e}")
-        raise HTTPException(status_code=500, detail="反馈保存失败")
+        try:
+            await db.execute(
+                """INSERT INTO feedback (id, question_id, answer_id, rating, comment, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (feedback_id, question_id, body.answer_id, body.rating, body.comment, now)
+            )
+            await db.commit()
+        except Exception as e:
+            print(f"[Feedback] 保存反馈失败: {e}")
+            raise HTTPException(status_code=500, detail="反馈保存失败")
 
     return {"message": "反馈已提交", "feedback_id": feedback_id}
 
@@ -462,12 +508,12 @@ async def get_feedback(question_id: str) -> dict:
     获取某问题的反馈记录
     业务场景：前端加载答案详情时查询用户是否已提交过反馈。
     """
-    db = await get_db()
-    rows = await db.execute_fetchall(
-        """SELECT id, question_id, answer_id, rating, comment, created_at
-           FROM feedback WHERE question_id = ?""",
-        (question_id,)
-    )
+    async with get_db() as db:
+        rows = await db.execute_fetchall(
+            """SELECT id, question_id, answer_id, rating, comment, created_at
+               FROM feedback WHERE question_id = ?""",
+            (question_id,)
+        )
 
     feedbacks = []
     for row in rows:

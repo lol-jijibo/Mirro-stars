@@ -10,6 +10,7 @@
 export interface QuestionCreate {
   content: string
   conversation_id?: string  // 多轮对话的会话ID，传入此字段表示追问
+  clarification_context?: string  // 澄清向导收集的补充信息，只参与AI生成
 }
 
 /** 问题列表项（不含答案详情） */
@@ -41,6 +42,15 @@ export interface SolutionStep {
   duration: string
 }
 
+/** 答案顶部行动摘要 */
+export interface ActionSummary {
+  conclusion: string
+  first_action: string
+  timeframe: string
+  risk: string
+  fit_for: string
+}
+
 /** AI生成的完整答案 */
 export interface AnswerResponse {
   id: string
@@ -50,6 +60,7 @@ export interface AnswerResponse {
   flowchart_mermaid: string | null
   steps: SolutionStep[]
   sources: Source[]
+  action_summary: ActionSummary | null
   related_questions: string[]
   created_at: string
 }
@@ -113,6 +124,7 @@ export type SSEEventType =
   | 'category'          // 问题分类结果
   | 'searching'         // 正在搜索提示
   | 'type'              // 答案类型: action=含步骤计划 / insight=纯深度分析
+  | 'action_summary'    // 答案顶部行动摘要
   | 'content'           // Markdown正文段落
   | 'flowchart'         // Mermaid流程图
   | 'steps'             // 分步执行计划

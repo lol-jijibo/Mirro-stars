@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
-from app.models.database import get_db, close_db
+from app.models.database import init_db, close_db
 from app.api.questions import router as questions_router
 from app.api.search import router as search_router
 from app.api.answers import router as answers_router
@@ -21,7 +21,7 @@ async def lifespan(app: FastAPI):
     关闭时：断开数据库连接
     """
     # 启动时预初始化数据库
-    await get_db()
+    await init_db()
     yield
     # 关闭时清理MySQL连接
     await close_db()

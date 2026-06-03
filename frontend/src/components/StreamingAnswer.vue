@@ -9,6 +9,15 @@ import { computed, ref } from 'vue'
 import MarkdownIt from 'markdown-it'
 import hljs from 'highlight.js'
 
+/** 生成标题的DOM id，用作TOC锚点 */
+function slugify(text: string): string {
+  return text
+    .replace(/\s+/g, '-')
+    .replace(/[^\w\u4e00-\u9fa5-]/g, '')
+    .toLowerCase()
+    .slice(0, 60)
+}
+
 /**
  * 初始化Markdown渲染器
  * 业务场景：将AI生成的Markdown文本转为HTML显示。
@@ -27,6 +36,45 @@ const md = new MarkdownIt({
     return ''
   },
 })
+
+// ====== 为 h2/h3/h4 标题添加锚点 id，供 TOC 导航使用 ======
+const defaultHeadingOpen = md.renderer.rules.heading_open
+md.renderer.rules.heading_open = (tokens, idx, options, env, self) => {
+  const hLevel = tokens[idx].tag
+  if ((hLevel === 'h2' || hLevel === 'h3' || hLevel === 'h4') && idx + 1 < tokens.length) {
+    const inlineToken = tokens[idx + 1]
+    if (inlineToken.type === 'inline' && inlineToken.content) {
+      const id = slugify(inlineToken.content)
+      tokens[idx].attrSet('id', id)
+      tokens[idx].attrSet('class', 'scroll-mt-20')
+    }
+  }
+  return defaultHeadingOpen
+    ? defaultHeadingOpen(tokens, idx, options, env, self)
+    : self.renderToken(tokens, idx, options)
+}
+
+// ====== 代码块包裹：添加语言标签 + 一键复制按钮 ======
+const defaultFence = md.renderer.rules.fence
+md.renderer.rules.fence = (tokens, idx, options, env, self) => {
+  const token = tokens[idx]
+  const lang = token.info?.trim() || ''
+  const langLabel = lang ? `<span class="code-lang-label">${md.utils.escapeHtml(lang)}</span>` : ''
+  const raw = defaultFence
+    ? defaultFence(tokens, idx, options, env, self)
+    : `<pre><code>${md.utils.escapeHtml(token.content)}</code></pre>`
+
+  return `<div class="code-block-wrapper">
+    <div class="code-block-header">
+      ${langLabel}
+      <button class="code-copy-btn" type="button">
+        <svg class="copy-icon w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+        <span>复制</span>
+      </button>
+    </div>
+    ${raw}
+  </div>`
+}
 
 const props = defineProps<{
   /** Markdown格式的答案正文 */
@@ -65,10 +113,46 @@ async function copyContent() {
     setTimeout(() => { copied.value = false }, 2000)
   }
 }
+
+/** 代码块内联复制 — 通过事件代理在容器上捕获点击 */
+function handleCodeCopy(event: Event) {
+  const btn = (event.target as HTMLElement).closest('.code-copy-btn')
+  if (!btn) return
+  const wrapper = btn.closest('.code-block-wrapper')
+  if (!wrapper) return
+  const code = wrapper.querySelector('code')
+  if (!code) return
+
+  navigator.clipboard.writeText(code.textContent || '').then(() => {
+    btn.classList.add('copied')
+    const span = btn.querySelector('span')
+    if (span) span.textContent = '已复制'
+    setTimeout(() => {
+      btn.classList.remove('copied')
+      if (span) span.textContent = '复制'
+    }, 2000)
+  }).catch(() => {
+    // 降级：选中文本
+    const range = document.createRange()
+    range.selectNodeContents(code)
+    const sel = window.getSelection()
+    sel?.removeAllRanges()
+    sel?.addRange(range)
+    document.execCommand('copy')
+    sel?.removeAllRanges()
+    btn.classList.add('copied')
+    const span = btn.querySelector('span')
+    if (span) span.textContent = '已复制'
+    setTimeout(() => {
+      btn.classList.remove('copied')
+      if (span) span.textContent = '复制'
+    }, 2000)
+  })
+}
 </script>
 
 <template>
-  <div class="relative">
+  <div class="relative" @click="handleCodeCopy">
     <div
       class="markdown-body bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-6"
       :class="{ 'cursor-blink': !isDone }"
@@ -100,3 +184,94 @@ async function copyContent() {
     </button>
   </div>
 </template>
+
+<style scoped>
+/* ====== 代码块包裹容器 ====== */
+.code-block-wrapper {
+  position: relative;
+  margin: 1rem 0;
+  border-radius: 0.75rem;
+  overflow: hidden;
+  background: #1e293b;
+  /* dark:slate-800 */
+}
+
+:global(.dark) .code-block-wrapper {
+  background: #0f172a;
+  /* darker for dark mode */
+}
+
+.code-block-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.5rem 1rem;
+  background: #334155;
+  /* slate-700 */
+}
+
+:global(.dark) .code-block-header {
+  background: #1e293b;
+}
+
+.code-lang-label {
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #94a3b8;
+  /* slate-400 */
+}
+
+.code-copy-btn {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.25rem 0.625rem;
+  border: none;
+  border-radius: 0.375rem;
+  background: rgba(255, 255, 255, 0.1);
+  color: #cbd5e1;
+  /* slate-300 */
+  font-size: 0.7rem;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  opacity: 0;
+}
+
+.code-block-wrapper:hover .code-copy-btn,
+.code-copy-btn.copied {
+  opacity: 1;
+}
+
+.code-copy-btn:hover {
+  background: rgba(255, 255, 255, 0.2);
+  color: #fff;
+}
+
+.code-copy-btn.copied {
+  background: rgba(34, 197, 94, 0.2);
+  color: #4ade80;
+}
+
+/* 重置 pre 的 margin，避免与 wrapper 重复 */
+.code-block-wrapper :deep(pre) {
+  margin: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+/* ====== 流式光标闪烁动画 ====== */
+.cursor-blink::after {
+  content: '▊';
+  animation: blink 1s step-end infinite;
+  color: #6366f1;
+  /* indigo-500 */
+}
+
+@keyframes blink {
+  50% {
+    opacity: 0;
+  }
+}
+</style>

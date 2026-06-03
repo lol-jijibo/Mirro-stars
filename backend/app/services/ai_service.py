@@ -13,6 +13,7 @@ from app.core.config import settings
 MAX_RETRIES = 3          # 最大重试次数
 RETRY_BACKOFF = 1.5      # 重试退避倍率（1s → 1.5s → 2.25s）
 REQUEST_TIMEOUT = 60.0   # 单次请求超时（秒）
+MAX_JSON_RETRIES = 2     # JSON解析失败时的最大重试次数
 
 
 def _get_client() -> AsyncOpenAI:
@@ -51,6 +52,169 @@ def _is_retryable_error(error: Exception) -> bool:
     if status is not None and 500 <= status < 600:
         return True
     return False
+
+
+def _repair_and_parse_json(raw_text: str) -> dict:
+    """
+    从LLM原始输出中提取并修复JSON。
+    LLM（尤其是DeepSeek等模型）在多轮对话长上下文场景下容易产出格式异常的JSON：
+    - 在JSON前后加解释文字
+    - JSON内部字符串含未转义的换行符或引号
+    - 数组/对象末尾多余的逗号（trailing comma）
+    - Markdown代码块包裹
+
+    此函数逐层尝试解析，从宽松到激进，确保尽可能恢复有效数据。
+    如果所有尝试都失败，抛出 JSONDecodeError 让调用方决定是否重试。
+    """
+    text = raw_text.strip()
+
+    # 第1层：去掉 ```json ... ``` 包裹
+    match = re.search(r'```(?:json)?\s*([\s\S]*?)\s*```', text)
+    if match:
+        text = match.group(1).strip()
+
+    # 第2层：定位最外层 { } 边界
+    start = text.find('{')
+    end = text.rfind('}')
+    if start == -1 or end <= start:
+        raise json.JSONDecodeError("未找到有效的JSON对象边界", text, 0)
+
+    json_candidate = text[start:end + 1]
+
+    # 第3层：直接尝试解析（大多数正常情况走这里）
+    try:
+        return json.loads(json_candidate)
+    except json.JSONDecodeError:
+        pass
+
+    # 第4层：移除 trailing commas（LLM常见错误：数组/对象末尾多余逗号）
+    repaired = re.sub(r',\s*([}\]])', r'\1', json_candidate)
+    try:
+        return json.loads(repaired)
+    except json.JSONDecodeError:
+        pass
+
+    # 第5层：修复字符串值内未转义的换行符
+    # LLM有时在JSON字符串值中直接插入真实换行而非\n转义
+    # 策略：找到所有字符串值，将其中的换行替换为\\n
+    def _escape_newlines_in_strings(s: str) -> str:
+        """在JSON字符串值内部转义未转义的换行符"""
+        result = []
+        in_string = False
+        escape_next = False
+        for ch in s:
+            if escape_next:
+                result.append(ch)
+                escape_next = False
+                continue
+            if ch == '\\':
+                result.append(ch)
+                escape_next = True
+                continue
+            if ch == '"':
+                in_string = not in_string
+                result.append(ch)
+                continue
+            if in_string and ch == '\n':
+                result.append('\\n')
+                continue
+            if in_string and ch == '\r':
+                result.append('\\r')
+                continue
+            if in_string and ch == '\t':
+                result.append('\\t')
+                continue
+            result.append(ch)
+        return ''.join(result)
+
+    repaired = _escape_newlines_in_strings(repaired)
+    try:
+        return json.loads(repaired)
+    except json.JSONDecodeError:
+        pass
+
+    # 第6层：尝试用正则提取各个顶层字段（最后手段）
+    # 如果LLM返回了大部分有效JSON但有小错误，尝试逐字段提取
+    result = _extract_fields_fallback(json_candidate)
+    if result:
+        print(f"[AI服务] JSON解析使用兜底字段提取，原始文本前200字符: {raw_text[:200]}")
+        return result
+
+    # 所有尝试都失败，保存原始文本用于调试，然后抛出异常
+    print(f"[AI服务] JSON解析完全失败，原始返回前500字符: {raw_text[:500]}")
+    raise json.JSONDecodeError(
+        f"所有JSON修复策略均失败，原始文本前200字符: {raw_text[:200]}",
+        raw_text, 0
+    )
+
+
+def _extract_fields_fallback(text: str) -> dict | None:
+    """
+    兜底方案：当JSON修复全部失败时，用正则逐字段提取。
+    适用于LLM返回了"接近JSON"但有小语法错误（如key未加引号等）的场景。
+    返回 None 表示无法提取有效数据。
+    """
+    result: dict = {}
+
+    # 提取 type
+    type_match = re.search(r'"type"\s*:\s*"(action|insight)"', text)
+    result["type"] = type_match.group(1) if type_match else "insight"
+
+    # 提取 content（核心字段，必须存在）
+    # content 通常是多行文本，夹在 "content": " 和下一个顶层字段之间
+    content_match = re.search(
+        r'"content"\s*:\s*"((?:[^"\\]|\\.)*)"', text, re.DOTALL
+    )
+    if not content_match:
+        # 尝试匹配跨行的content：从 "content": " 到 ", "flowchart 或 ", "steps 或末尾
+        content_match = re.search(
+            r'"content"\s*:\s*"([\s\S]*?)"\s*(?:,\s*"(?:flowchart_mermaid|steps|related_questions|type|action_summary)|\s*\})',
+            text
+        )
+    if content_match:
+        result["content"] = content_match.group(1)
+    else:
+        # content 是核心字段，提取不到则整体失败
+        return None
+
+    # 提取 flowchart_mermaid
+    fc_match = re.search(r'"flowchart_mermaid"\s*:\s*"((?:[^"\\]|\\.)*)"', text)
+    result["flowchart_mermaid"] = fc_match.group(1) if fc_match else ""
+
+    # 提取 steps（数组）
+    steps_match = re.search(r'"steps"\s*:\s*(\[[\s\S]*?\])', text)
+    if steps_match:
+        try:
+            result["steps"] = json.loads(steps_match.group(1))
+        except json.JSONDecodeError:
+            result["steps"] = []
+    else:
+        result["steps"] = []
+
+    # 提取 action_summary（子对象）
+    as_match = re.search(r'"action_summary"\s*:\s*(\{[\s\S]*?\})', text)
+    if as_match:
+        try:
+            # 清理子对象中的trailing commas
+            as_text = re.sub(r',\s*}', '}', as_match.group(1))
+            result["action_summary"] = json.loads(as_text)
+        except json.JSONDecodeError:
+            result["action_summary"] = None
+    else:
+        result["action_summary"] = None
+
+    # 提取 related_questions（字符串数组）
+    rq_match = re.search(r'"related_questions"\s*:\s*(\[[\s\S]*?\])', text)
+    if rq_match:
+        try:
+            result["related_questions"] = json.loads(rq_match.group(1))
+        except json.JSONDecodeError:
+            result["related_questions"] = []
+    else:
+        result["related_questions"] = []
+
+    # 至少要有 content 才算成功
+    return result if result.get("content") else None
 
 
 async def _retry_call(client: AsyncOpenAI, messages: list, temperature: float, max_tokens: int):
@@ -100,7 +264,14 @@ async def generate_answer(question: str, history: list[dict] | None = None) -> d
         "type": "action" | "insight",
         "content": "Markdown格式的解答正文",
         "flowchart_mermaid": "Mermaid语法字符串或空",
-        "steps": [{"step": 1, "title": "...", "description": "...", "duration": "..."}]
+        "steps": [{"step": 1, "title": "...", "description": "...", "duration": "..."}],
+        "action_summary": {
+            "conclusion": "...",
+            "first_action": "...",
+            "timeframe": "...",
+            "risk": "...",
+            "fit_for": "..."
+        }
     }
     """
     client = _get_client()
@@ -131,6 +302,14 @@ async def generate_answer(question: str, history: list[dict] | None = None) -> d
 ### type（必填）
 根据第一步的判断，返回 "action" 或 "insight"
 
+### action_summary（必填）
+为答案生成一个可立即阅读的顶部摘要，帮助用户先抓住重点再看全文：
+- conclusion: 核心结论，用2-3句话直击问题本质
+- first_action: 用户现在最应该先做的一件事，要具体可执行
+- timeframe: 整体建议周期或见效时间，如"1周内先验证方向，1-3个月持续推进"
+- risk: 最需要注意的风险或误区
+- fit_for: 该方案最适合的人群或场景
+
 ### steps（仅 action 类型填写，insight 类型返回空数组 []）
 为行动型问题设计3-6个分步执行计划，每个步骤包含：
 - step: 步骤序号（从1开始）
@@ -155,6 +334,13 @@ async def generate_answer(question: str, history: list[dict] | None = None) -> d
 输出必须严格符合以下JSON格式，不要在JSON外加任何文字：
 {
   "type": "action",
+  "action_summary": {
+    "conclusion": "...",
+    "first_action": "...",
+    "timeframe": "...",
+    "risk": "...",
+    "fit_for": "..."
+  },
   "content": "...Markdown...",
   "flowchart_mermaid": "graph TD\\n    A[...] --> B[...]",
   "steps": [
@@ -169,37 +355,52 @@ async def generate_answer(question: str, history: list[dict] | None = None) -> d
         messages.extend(history)
     messages.append({"role": "user", "content": question})
 
-    response = await _retry_call(
-        client=client,
-        messages=messages,
-        temperature=0.7,
-        max_tokens=4000,
-    )
+    # 用于JSON解析重试的消息基础（重试时会追加格式纠正提示）
+    base_messages = list(messages)
 
-    # 解析LLM返回的JSON字符串
-    raw_text = response.choices[0].message.content.strip()
+    last_raw_text = ""
+    for json_attempt in range(MAX_JSON_RETRIES + 1):
+        # 重试时降低temperature以提高格式稳定性
+        temperature = 0.7 if json_attempt == 0 else 0.3
 
-    # 尝试提取JSON（LLM有时会在JSON外加markdown代码块标记）
-    json_text = raw_text
-    # 去掉可能的 ```json ... ``` 包裹
-    match = re.search(r'```(?:json)?\s*([\s\S]*?)\s*```', raw_text)
-    if match:
-        json_text = match.group(1)
-    else:
-        # 尝试直接找到 { 和 }
-        start = raw_text.find('{')
-        end = raw_text.rfind('}') + 1
-        if start != -1 and end > start:
-            json_text = raw_text[start:end]
+        response = await _retry_call(
+            client=client,
+            messages=messages,
+            temperature=temperature,
+            max_tokens=4000,
+        )
 
-    result = json.loads(json_text)
-    return {
-        "type": result.get("type", "insight"),
-        "content": result.get("content", ""),
-        "flowchart_mermaid": result.get("flowchart_mermaid", ""),
-        "steps": result.get("steps", []),
-        "related_questions": result.get("related_questions", []),
-    }
+        raw_text = response.choices[0].message.content.strip()
+        last_raw_text = raw_text
+
+        try:
+            result = _repair_and_parse_json(raw_text)
+            return {
+                "type": result.get("type", "insight"),
+                "content": result.get("content", ""),
+                "flowchart_mermaid": result.get("flowchart_mermaid", ""),
+                "steps": result.get("steps", []),
+                "action_summary": result.get("action_summary"),
+                "related_questions": result.get("related_questions", []),
+            }
+        except json.JSONDecodeError as e:
+            if json_attempt < MAX_JSON_RETRIES:
+                print(f"[AI服务] JSON解析失败(尝试{json_attempt+1}/{MAX_JSON_RETRIES+1})，将重试: {e}")
+                # 在消息末尾追加格式纠正提示，让模型重新生成
+                messages = list(base_messages) + [
+                    {"role": "assistant", "content": raw_text[:500]},
+                    {"role": "user", "content": (
+                        "你上面的回复格式有误，无法解析为JSON。请严格只输出要求的JSON对象，不要在前面或后面加任何解释文字。"
+                        "特别注意：JSON中所有字符串值内的双引号必须用反斜杠转义（\\\"），换行符必须写为\\\\n而非真实换行。"
+                        "请重新输出完整JSON。"
+                    )},
+                ]
+                # 重试前短暂等待
+                await asyncio.sleep(0.5)
+            else:
+                # 所有JSON重试都失败了
+                print(f"[AI服务] JSON解析最终失败，原始返回前1000字符: {last_raw_text[:1000]}")
+                raise
 
 
 async def generate_related_questions(question: str, answer_content: str) -> list[str]:
@@ -252,26 +453,66 @@ async def classify_question(question: str) -> str:
     """
     对用户问题进行自动分类
     业务场景：历史列表中展示分类标签，统计看板中按分类汇总。
-    分类体系：职业发展 / 情感关系 / 个人成长 / 理财规划 / 健康生活 / 社交技巧 / 其他
+    分类体系：8个类别覆盖年轻人常见问题领域。
     """
     client = _get_client()
 
-    prompt = f"""请对以下用户问题进行分类，只返回分类名称，不要返回其他内容。
+    system_prompt = """你是一个问题分类专家。请将用户问题归入以下8个类别之一，只回复类别名称。
 
-分类选项：职业发展、情感关系、个人成长、理财规划、健康生活、社交技巧、其他
+## 分类标准（含典型示例）
 
-用户问题：{question}
+1. **职业发展** — 求职、面试、转行、跳槽、薪资谈判、职业规划、副业、创业、职场人际关系、行业选择
+   示例："如何准备产品经理面试？"、"要不要从大厂跳去创业公司？"
 
-分类："""
+2. **情感关系** — 恋爱、婚姻、家庭关系、友情、暧昧、分手、相亲、亲密关系沟通
+   示例："异地恋怎么维持？"、"父母催婚怎么办？"
+
+3. **个人成长** — 学习方法、时间管理、习惯养成、思维提升、情绪管理、自我认知、人生规划
+   示例："如何克服拖延症？"、"怎样建立批判性思维？"
+
+4. **理财规划** — 投资、储蓄、买房、保险、税务、消费观、负债管理
+   示例："月入1万怎么理财？"、"买房还是租房？"
+
+5. **健康生活** — 运动健身、饮食营养、睡眠、心理健康、医疗、养生、皮肤护理
+   示例："如何改善失眠？"、"增肌期间怎么吃？"
+
+6. **社交技巧** — 沟通表达、人脉搭建、社交焦虑、公共演讲、谈判说服、网络社交
+   示例："怎么在饭局上不冷场？"、"如何优雅地拒绝别人？"
+
+7. **技术学习** — 编程开发、AI/机器学习、工程技术、工具软件、技术架构、开源项目、科技趋势
+   示例："什么是Harness工程？"、"React和Vue怎么选？"、"如何入门大模型开发？"
+
+8. **其他** — 以上7类都无法覆盖的问题（如纯娱乐八卦、纯粹的好奇问答、无法归类的抽象问题等）
+   注意：只有在确实不属于前7类时才选此项，不要偷懒。
+
+## 分类原则
+- 优先选最匹配的那个类别，不要犹豫
+- 技术、编程、工程、AI类问题 → 技术学习
+- 学习/自我提升但非技术类 → 个人成长
+- 工作中的关系处理 → 职业发展
+- 只有真正无法归类时才选"其他\""""
 
     response = await _retry_call(
         client=client,
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.1,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": f"请分类以下问题（只回复类别名）：\n{question}"},
+        ],
+        temperature=0.3,
         max_tokens=20,
     )
 
     category = response.choices[0].message.content.strip()
-    # 确保返回的分类在预设范围内
-    valid_categories = ["职业发展", "情感关系", "个人成长", "理财规划", "健康生活", "社交技巧", "其他"]
-    return category if category in valid_categories else "其他"
+    # 清理可能的标点和空格
+    category = category.replace("：", "").replace(":", "").strip()
+
+    valid_categories = ["职业发展", "情感关系", "个人成长", "理财规划", "健康生活", "社交技巧", "技术学习", "其他"]
+    if category in valid_categories:
+        return category
+
+    # 模糊匹配：LLM 可能返回了带序号或描述的内容
+    for vc in valid_categories:
+        if vc in category:
+            return vc
+
+    return "其他"
