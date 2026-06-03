@@ -4,10 +4,17 @@
 
 ## 📸 项目预览
 
-| 首页 — 提问入口 | 答案页 — AI 结构化解答 |
-|:---:|:---:|
-| ![首页截图](frontend/playwright-home-check.png) | ![答案页截图](frontend/playwright-question-check.png) |
-| 输入问题，可选澄清向导补充上下文 | Markdown 流式输出 + 流程图 + 分步执行计划 |
+**🏠 首页 — 提问入口**
+
+<img src="frontend/playwright-home-check.png" alt="首页截图" width="100%" />
+
+> 输入问题，可选澄清向导补充现状、目标和限制条件
+
+**📋 答案页 — AI 结构化解答**
+
+<img src="frontend/playwright-question-check.png" alt="答案页截图" width="100%" />
+
+> Markdown 流式输出 + Mermaid 流程图 + 分步执行计划 + 代码块一键复制
 
 ## 🛠 技术栈
 
