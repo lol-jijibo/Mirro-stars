@@ -4,7 +4,7 @@
   支持回车快捷提交、字数提示、加载状态禁用等细节。
 -->
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, nextTick } from 'vue'
 
 const emit = defineEmits<{
   /** 用户提交问题时触发，携带输入内容 */
@@ -34,6 +34,7 @@ const props = withDefaults(defineProps<{
 
 /** 用户输入的提问内容 */
 const inputContent = ref('')
+const textareaRef = ref<HTMLTextAreaElement | null>(null)
 
 /** 还能输入多少字（最多500字） */
 const remainingChars = computed(() => 500 - inputContent.value.length)
@@ -60,6 +61,13 @@ function handleKeydown(e: KeyboardEvent) {
     handleSubmit()
   }
 }
+
+async function focus() {
+  await nextTick()
+  textareaRef.value?.focus()
+}
+
+defineExpose({ focus })
 </script>
 
 <template>
@@ -68,6 +76,7 @@ function handleKeydown(e: KeyboardEvent) {
     <div>
       <div class="relative">
         <textarea
+          ref="textareaRef"
           v-model="inputContent"
           :disabled="loading"
           :placeholder="placeholder"

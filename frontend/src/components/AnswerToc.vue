@@ -113,8 +113,8 @@ onUnmounted(teardownObserver)
   <Transition name="toc-slide">
     <nav
       v-if="visible"
-      class="hidden xl:block fixed top-24 z-30 w-48"
-      style="left: max(1rem, calc((100vw - 60rem) / 2 - 13rem)); max-height: calc(100vh - 8rem);"
+      class="hidden 2xl:block fixed top-24 z-30 w-44"
+      style="left: max(1rem, calc((100vw - 72rem) / 2 - 12rem)); max-height: calc(100vh - 8rem);"
     >
       <div class="text-xs font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider mb-3">
         目录
@@ -123,12 +123,14 @@ onUnmounted(teardownObserver)
         <li
           v-for="heading in headings"
           :key="heading.id"
+          :class="heading.level === 2 ? 'mt-2 pt-2 border-t border-slate-200/70 dark:border-slate-700/70' : ''"
         >
           <button
-            class="block w-full text-left text-sm leading-snug py-1 px-2 rounded-md border-l-2 transition-all duration-150 truncate"
+            class="flex w-full items-start gap-1.5 text-left text-sm leading-snug py-1 px-2 rounded-md border-l-2 transition-all duration-150"
             :class="[
-              heading.level === 3 ? 'pl-4' : '',
-              heading.level === 4 ? 'pl-6' : '',
+              heading.level === 2 ? 'font-medium' : '',
+              heading.level === 3 ? 'pl-3' : '',
+              heading.level === 4 ? 'pl-5' : '',
               activeId === heading.id
                 ? 'border-indigo-500 text-indigo-700 dark:text-indigo-300 bg-indigo-50 dark:bg-indigo-950/60 font-medium'
                 : 'border-transparent text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800/50',
@@ -136,7 +138,14 @@ onUnmounted(teardownObserver)
             :title="heading.text"
             @click="scrollTo(heading.id)"
           >
-            {{ heading.text }}
+            <span
+              v-if="heading.level > 2"
+              class="shrink-0 text-slate-400 dark:text-slate-500"
+              aria-hidden="true"
+            >
+              {{ '-'.repeat(heading.level - 2) }}
+            </span>
+            <span class="min-w-0 flex-1 truncate">{{ heading.text }}</span>
           </button>
         </li>
       </ul>

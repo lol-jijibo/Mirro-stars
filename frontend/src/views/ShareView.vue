@@ -137,10 +137,11 @@ onMounted(async () => {
         </div>
       </div>
 
-      <!-- 顶部行动摘要 -->
+      <!-- 顶部回应要点 -->
       <ActionSummaryPanel
         v-if="data.answer.action_summary"
         :summary="data.answer.action_summary"
+        :answer-type="data.answer.type"
       />
 
       <!-- AI答案正文 — Markdown渲染 -->

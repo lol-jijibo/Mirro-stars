@@ -62,7 +62,7 @@ onMounted(() => {
   <!-- 全局布局：顶部导航 + 主内容区 -->
   <div class="min-h-screen bg-slate-50 dark:bg-slate-900 transition-colors duration-300">
     <NavBar :is-dark="isDark" @toggle-dark="toggleDark" />
-    <main class="max-w-4xl mx-auto px-4 py-8 page-container">
+    <main class="max-w-6xl mx-auto px-4 py-8 page-container">
       <!-- 页面主体：直接渲染当前路由，避免异常恢复时路由内容被过渡状态吞掉 -->
       <router-view />
     </main>

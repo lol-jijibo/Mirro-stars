@@ -54,14 +54,14 @@ class SolutionStep(BaseModel):
 
 class ActionSummary(BaseModel):
     """
-    答案顶部行动摘要
-    业务场景：将长答案压缩为用户一眼能执行和判断的关键提示
+    答案顶部回应要点
+    业务场景：将长答案压缩为匹配问题类型的结论、理解、边界和误区提示
     """
     conclusion: str = Field(..., description="核心结论，2-3句话概括答案重点")
-    first_action: str = Field(..., description="用户现在最应该先做的一件事")
-    timeframe: str = Field(..., description="整体建议周期或见效时间")
-    risk: str = Field(..., description="执行中最需要注意的风险")
-    fit_for: str = Field(..., description="该方案最适合的人群或场景")
+    first_action: str = Field(..., description="行动型问题的下一步建议，认知型问题的核心理解")
+    timeframe: str = Field(..., description="行动型问题的推进节奏，认知型问题的适用边界")
+    risk: str = Field(..., description="最需要注意的风险或常见误区")
+    fit_for: str = Field(..., description="适合场景或延伸思考方向")
 
 
 class AnswerResponse(BaseModel):
@@ -76,7 +76,7 @@ class AnswerResponse(BaseModel):
     flowchart_mermaid: Optional[str] = Field(None, description="Mermaid流程图语法，前端用mermaid.js渲染")
     steps: list[SolutionStep] = Field(default_factory=list, description="分步执行计划")
     sources: list[Source] = Field(default_factory=list, description="AI搜索引用的来源列表")
-    action_summary: Optional[ActionSummary] = Field(None, description="答案顶部行动摘要，帮助用户快速抓住下一步")
+    action_summary: Optional[ActionSummary] = Field(None, description="答案顶部回应要点，帮助用户快速抓住关键理解")
     related_questions: list[str] = Field(default_factory=list, description="AI生成的相关追问建议，在生成答案时一并产出")
     created_at: str = Field(..., description="生成时间")
 

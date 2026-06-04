@@ -29,7 +29,7 @@ export const useQuestionStore = defineStore('question', () => {
   /** 分步执行计划 */
   const streamingSteps = ref<SolutionStep[]>([])
 
-  /** 答案顶部行动摘要 */
+  /** 答案顶部回应要点 */
   const streamingActionSummary = ref<ActionSummary | null>(null)
 
   /** AI生成的相关推荐追问 */
@@ -106,7 +106,7 @@ export const useQuestionStore = defineStore('question', () => {
     streamingSteps.value = steps
   }
 
-  /** 设置答案顶部行动摘要 */
+  /** 设置答案顶部回应要点 */
   function setActionSummary(summary: ActionSummary) {
     streamingActionSummary.value = summary
   }

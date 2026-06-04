@@ -5,9 +5,11 @@
   生成完成后，使用 markdown-it 完整渲染Markdown。
 -->
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onUnmounted, ref } from 'vue'
 import MarkdownIt from 'markdown-it'
 import hljs from 'highlight.js'
+
+let copyToastTimer: number | undefined
 
 /** 生成标题的DOM id，用作TOC锚点 */
 function slugify(text: string): string {
@@ -37,6 +39,24 @@ const md = new MarkdownIt({
   },
 })
 
+// ====== 支持 ==重点== 语法，渲染为重点标注 ======
+md.inline.ruler.before('emphasis', 'plain_mark', (state: any, silent: boolean) => {
+  const start = state.pos
+  if (state.src.slice(start, start + 2) !== '==') return false
+
+  const end = state.src.indexOf('==', start + 2)
+  if (end < 0 || end === start + 2) return false
+
+  if (!silent) {
+    const openToken = state.push('mark_open', 'mark', 1)
+    openToken.attrSet('class', 'doc-mark')
+    state.md.inline.parse(state.src.slice(start + 2, end), state.md, state.env, state.tokens)
+    state.push('mark_close', 'mark', -1)
+  }
+  state.pos = end + 2
+  return true
+})
+
 // ====== 为 h2/h3/h4 标题添加锚点 id，供 TOC 导航使用 ======
 const defaultHeadingOpen = md.renderer.rules.heading_open
 md.renderer.rules.heading_open = (tokens, idx, options, env, self) => {
@@ -51,6 +71,32 @@ md.renderer.rules.heading_open = (tokens, idx, options, env, self) => {
   }
   return defaultHeadingOpen
     ? defaultHeadingOpen(tokens, idx, options, env, self)
+    : self.renderToken(tokens, idx, options)
+}
+
+// ====== 表格外层包裹，保证宽表格在详情页内横向滚动 ======
+const defaultTableOpen = md.renderer.rules.table_open
+const defaultTableClose = md.renderer.rules.table_close
+md.renderer.rules.table_open = (tokens, idx, options, env, self) => {
+  const tableOpen = defaultTableOpen
+    ? defaultTableOpen(tokens, idx, options, env, self)
+    : self.renderToken(tokens, idx, options)
+  return `<div class="markdown-table-wrapper">${tableOpen}`
+}
+md.renderer.rules.table_close = (tokens, idx, options, env, self) => {
+  const tableClose = defaultTableClose
+    ? defaultTableClose(tokens, idx, options, env, self)
+    : self.renderToken(tokens, idx, options)
+  return `${tableClose}</div>`
+}
+
+// ====== 外部链接默认新窗口打开，避免阅读状态丢失 ======
+const defaultLinkOpen = md.renderer.rules.link_open
+md.renderer.rules.link_open = (tokens, idx, options, env, self) => {
+  tokens[idx].attrSet('target', '_blank')
+  tokens[idx].attrSet('rel', 'noopener noreferrer')
+  return defaultLinkOpen
+    ? defaultLinkOpen(tokens, idx, options, env, self)
     : self.renderToken(tokens, idx, options)
 }
 
@@ -85,6 +131,8 @@ const props = defineProps<{
 
 /** 复制按钮状态：是否刚完成复制（用于显示"已复制"反馈） */
 const copied = ref(false)
+/** 顶部复制提示是否显示，作为全文复制后的轻量反馈 */
+const showCopyToast = ref(false)
 
 /** 将Markdown转为HTML */
 const renderedHtml = computed(() => {
@@ -97,8 +145,7 @@ async function copyContent() {
   if (!props.content) return
   try {
     await navigator.clipboard.writeText(props.content)
-    copied.value = true
-    setTimeout(() => { copied.value = false }, 2000)
+    showCopiedFeedback()
   } catch {
     // 降级方案：传统方式复制
     const textarea = document.createElement('textarea')
@@ -109,9 +156,20 @@ async function copyContent() {
     textarea.select()
     document.execCommand('copy')
     document.body.removeChild(textarea)
-    copied.value = true
-    setTimeout(() => { copied.value = false }, 2000)
+    showCopiedFeedback()
   }
+}
+
+/** 展示全文复制成功反馈，并在2.5秒后自动收起 */
+function showCopiedFeedback() {
+  copied.value = true
+  showCopyToast.value = true
+  if (copyToastTimer) window.clearTimeout(copyToastTimer)
+  copyToastTimer = window.setTimeout(() => {
+    copied.value = false
+    showCopyToast.value = false
+    copyToastTimer = undefined
+  }, 2500)
 }
 
 /** 代码块内联复制 — 通过事件代理在容器上捕获点击 */
@@ -149,6 +207,10 @@ function handleCodeCopy(event: Event) {
     }, 2000)
   })
 }
+
+onUnmounted(() => {
+  if (copyToastTimer) window.clearTimeout(copyToastTimer)
+})
 </script>
 
 <template>
@@ -182,6 +244,20 @@ function handleCodeCopy(event: Event) {
         <span>📋</span> 复制全文
       </template>
     </button>
+
+    <Transition name="copy-toast">
+      <div
+        v-if="showCopyToast"
+        class="fixed inset-x-0 top-6 z-50 flex justify-center pointer-events-none"
+      >
+        <div
+          class="rounded-xl border border-slate-200/80 bg-white/95 px-4 py-2 text-sm font-bold text-red-500 shadow-lg shadow-slate-200/60 backdrop-blur-md
+                 dark:border-slate-600/80 dark:bg-slate-800/95 dark:text-red-500 dark:shadow-slate-950/40"
+        >
+          已复制
+        </div>
+      </div>
+    </Transition>
   </div>
 </template>
 
@@ -273,5 +349,24 @@ function handleCodeCopy(event: Event) {
   50% {
     opacity: 0;
   }
+}
+
+.copy-toast-enter-active,
+.copy-toast-leave-active {
+  transition:
+    opacity 0.28s ease,
+    transform 0.28s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.copy-toast-enter-from,
+.copy-toast-leave-to {
+  opacity: 0;
+  transform: translateY(-0.75rem);
+}
+
+.copy-toast-enter-to,
+.copy-toast-leave-from {
+  opacity: 1;
+  transform: translateY(0);
 }
 </style>

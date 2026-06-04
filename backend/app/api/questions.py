@@ -34,6 +34,7 @@ async def _stream_answer(question_id: str, content: str, category: str, conversa
     - category:  问题分类结果（已在create_question中同步完成，直接发送真实分类）
     - searching:  开始全网搜索
     - type:      答案类型（action=含步骤计划 / insight=纯深度分析），前端据此决定是否渲染步骤和流程图区域
+    - action_summary: 顶部回应要点（按答案类型展示下一步、核心理解、边界和误区）
     - content:   Markdown正文内容（逐块发送，前端拼接）
     - flowchart: Mermaid流程图（仅action类型且流程复杂时发送）
     - steps:     分步执行计划（仅action类型时发送，insight类型为空数组）
@@ -109,7 +110,7 @@ async def _stream_answer(question_id: str, content: str, category: str, conversa
     answer_type = ai_result.get("type", "insight")
     yield f"event: type\ndata: {answer_type}\n\n"
 
-    # 阶段3.6：发送顶部行动摘要，让用户先看到结论、下一步和风险
+    # 阶段3.6：发送顶部回应要点，让用户先看到结论、理解重点和边界误区
     action_summary = ai_result.get("action_summary") or {}
     if isinstance(action_summary, dict) and action_summary:
         yield f"event: action_summary\ndata: {json.dumps(action_summary, ensure_ascii=False)}\n\n"

@@ -152,7 +152,7 @@ async def _init_tables(db: MySQLDatabase):
                 flowchart_mermaid TEXT COMMENT 'Mermaid流程图语法，前端直接渲染',
                 steps TEXT COMMENT '分步执行计划，JSON数组 [{step, title, desc, duration}]',
                 sources TEXT COMMENT '引用来源，JSON数组 [{title, url, snippet}]',
-                action_summary TEXT COMMENT '答案顶部行动摘要，JSON对象 {conclusion, first_action, timeframe, risk, fit_for}',
+                action_summary TEXT COMMENT '答案顶部回应要点，JSON对象 {conclusion, first_action, timeframe, risk, fit_for}',
                 related_questions TEXT COMMENT 'AI生成的相关追问建议，JSON数组',
                 created_at VARCHAR(255) NOT NULL COMMENT '生成时间',
                 FOREIGN KEY (question_id) REFERENCES questions(id) ON DELETE CASCADE
@@ -191,7 +191,7 @@ async def _init_tables(db: MySQLDatabase):
     if not await db.column_exists("answers", "action_summary"):
         await db.execute("""
             ALTER TABLE answers ADD COLUMN action_summary TEXT
-            COMMENT '答案顶部行动摘要，JSON对象'
+            COMMENT '答案顶部回应要点，JSON对象'
             AFTER sources
         """)
         await db.commit()
